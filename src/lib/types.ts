@@ -1,8 +1,11 @@
 /** 音声を文字にするエンジン */
 export type TranscribeEngine = 'gemini' | 'openai' | 'webspeech'
 
-/** 書き起こしを整えるエンジン（none = 整形せず書き起こしのまま） */
-export type PolishEngine = 'gemini' | 'openai' | 'anthropic' | 'none'
+/**
+ * 書き起こしを整えるエンジン。
+ * rules = APIキー不要のルールベース簡易整形、none = 整形せず書き起こしのまま。
+ */
+export type PolishEngine = 'gemini' | 'openai' | 'anthropic' | 'rules' | 'none'
 
 export type ProviderId = 'gemini' | 'openai' | 'anthropic'
 

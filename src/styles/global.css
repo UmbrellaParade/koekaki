@@ -740,6 +740,7 @@ p {
 
 .seg {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 3px;
   background: var(--surface-2);
@@ -747,7 +748,7 @@ p {
 }
 
 .seg button {
-  flex: 1;
+  flex: 1 1 86px;
   padding: 7px 8px;
   border-radius: 9px;
   font-size: 13px;

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isWebSpeechSupported } from '../lib/providers/webspeech'
 import type { Settings } from '../lib/types'
 import { EyeIcon, EyeOffIcon, MicIcon, SparkIcon } from './Icons'
 import { Sheet } from './Sheet'
@@ -14,6 +15,10 @@ export function Onboarding({ settings, onChange, onFinish }: OnboardingProps) {
   const [step, setStep] = useState(0)
   const [reveal, setReveal] = useState(false)
   const hasKey = settings.apiKeys.gemini.trim().length > 0
+  const webSpeechOk = isWebSpeechSupported()
+  /** キーなし構成（ブラウザ内蔵の認識 + ルールベース整形）を選んでいるか */
+  const keyless = settings.transcribeEngine === 'webspeech' && settings.polishEngine === 'rules'
+  const canFinish = hasKey || keyless
 
   return (
     <Sheet
@@ -31,8 +36,8 @@ export function Onboarding({ settings, onChange, onFinish }: OnboardingProps) {
               次へ
             </button>
           ) : (
-            <button className="btn primary sm" onClick={onFinish} disabled={!hasKey}>
-              {hasKey ? 'はじめる' : 'キーを入力してください'}
+            <button className="btn primary sm" onClick={onFinish} disabled={!canFinish}>
+              {canFinish ? 'はじめる' : 'キーを入力してください'}
             </button>
           )}
         </>
@@ -79,16 +84,20 @@ export function Onboarding({ settings, onChange, onFinish }: OnboardingProps) {
         <div className="onboard">
           <h3>月額ゼロで使えます</h3>
           <p>
-            こえかきは、あなた自身の AI の API キーを使って動きます。
-            月額課金はなく、実際に使った分だけ AI 各社に支払う形です。
+            こえかきに月額課金はありません。あなた自身の AI の API キーを使い、
+            実際に使った分だけ AI 各社に支払う形です。
           </p>
           <div className="notice">
             <SparkIcon className="ico" />
             <div>
-              Google の Gemini には無料枠があります。1日に何十回か使う程度なら、
-              多くの場合そのまま無料の範囲に収まります。
+              Gemini の無料枠は1日1,500回。こえかきは1回の録音で1回しか使わないので、
+              普通の使い方では無料の範囲を出ません。仮に超えても1分あたり1円未満です。
             </div>
           </div>
+          <p style={{ fontSize: 13 }}>
+            キーを用意したくない場合は、次の画面で「APIキーなしで始める」も選べます。
+            精度は下がりますが、費用も通信も完全にゼロで使えます。
+          </p>
           <p style={{ fontSize: 13 }}>
             音声とテキストは、このブラウザから AI 各社へ直接送られます。
             こえかきの運営者がその内容を受け取ることはありません（そもそも中継サーバーがありません）。
@@ -117,7 +126,15 @@ export function Onboarding({ settings, onChange, onFinish }: OnboardingProps) {
                 className="input mono"
                 type={reveal ? 'text' : 'password'}
                 value={settings.apiKeys.gemini}
-                onChange={(e) => onChange({ apiKeys: { ...settings.apiKeys, gemini: e.target.value.trim() } })}
+                onChange={(e) =>
+                  onChange({
+                    apiKeys: { ...settings.apiKeys, gemini: e.target.value.trim() },
+                    // キーを入れたら AI 経路に戻す
+                    ...(e.target.value.trim() && keyless
+                      ? { transcribeEngine: 'gemini' as const, polishEngine: 'gemini' as const }
+                      : {}),
+                  })
+                }
                 placeholder="AIza..."
                 autoComplete="off"
                 spellCheck={false}
@@ -127,6 +144,39 @@ export function Onboarding({ settings, onChange, onFinish }: OnboardingProps) {
               </button>
             </div>
             <div className="desc">キーはこの端末のブラウザ内にだけ保存されます。後から設定画面で変更できます。</div>
+          </div>
+
+          <div
+            style={{
+              borderTop: '1px solid var(--border)',
+              marginTop: 22,
+              paddingTop: 18,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>キーを用意せずに試すこともできます</div>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
+              ブラウザ内蔵の音声認識と、端末内のルールだけで整形する構成です。
+              費用も通信先もゼロで、音声がどこにも送られません。
+              ただし整形できるのはフィラー削除・言い詰まりの整理・句点の補完まで。
+              メール調に直す、箇条書きに構造化するといった処理は AI が必要です。
+            </p>
+            {keyless ? (
+              <div className="notice">
+                <SparkIcon className="ico" />
+                <div>
+                  キーなし構成が選ばれています。このまま「はじめる」を押してください。
+                  あとから設定画面でキーを入れれば AI 整形に切り替えられます。
+                </div>
+              </div>
+            ) : (
+              <button
+                className="btn block"
+                disabled={!webSpeechOk}
+                onClick={() => onChange({ transcribeEngine: 'webspeech', polishEngine: 'rules' })}
+              >
+                {webSpeechOk ? 'APIキーなしで始める（無料）' : 'このブラウザは内蔵音声認識に非対応です'}
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -8,6 +8,7 @@ import {
 import { anthropicPolish } from './providers/anthropic'
 import { geminiCombined, geminiPolish, geminiTranscribe } from './providers/gemini'
 import { openaiPolish, openaiTranscribe } from './providers/openai'
+import { rulePolish, ruleModeSupported } from './rulePolish'
 import type { Mode, ProviderId, Settings } from './types'
 import { ApiError } from './types'
 
@@ -35,6 +36,7 @@ const ENGINE_LABEL: Record<string, string> = {
   openai: 'OpenAI',
   anthropic: 'Claude',
   webspeech: 'ブラウザ内蔵',
+  rules: '簡易整形',
   none: '整形なし',
 }
 
@@ -105,7 +107,11 @@ export async function processRecording(input: ProcessInput): Promise<ProcessOutp
   let polished = ''
   let polishLabel = ''
 
-  if (settings.polishEngine === 'gemini') {
+  if (settings.polishEngine === 'rules') {
+    // キーも通信も使わない経路。ここだけは必ずローカルで完結する。
+    polished = rulePolish(raw, mode)
+    polishLabel = ruleModeSupported(mode.id) ? ENGINE_LABEL.rules : `${ENGINE_LABEL.rules}（モード未対応）`
+  } else if (settings.polishEngine === 'gemini') {
     const res = await geminiPolish(settings.apiKeys.gemini, settings.models.geminiPolish, system, raw)
     polished = res.polished
     cost += textCost(settings.models.geminiPolish, res.usage.promptTokens, res.usage.outputTokens)

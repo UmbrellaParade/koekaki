@@ -187,14 +187,28 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
               { value: 'gemini', label: 'Gemini' },
               { value: 'openai', label: 'OpenAI' },
               { value: 'anthropic', label: 'Claude' },
+              { value: 'rules', label: '簡易（無料）' },
               { value: 'none', label: 'なし' },
             ]}
           />
           <div className="desc">
-            {settings.polishEngine === 'none'
-              ? '整形せず、書き起こしをそのまま出します。'
-              : 'フィラー除去・言い直しの整理・句読点付けをこのエンジンが担当します。'}
+            {settings.polishEngine === 'none' &&
+              '整形せず、書き起こしをそのまま出します。'}
+            {settings.polishEngine === 'rules' &&
+              'APIキーも通信も使わず、端末内のルールだけで整形します。費用は完全にゼロですが、できるのは「明らかなフィラーの削除」「言い詰まりの繰り返しをまとめる」「言い直しの整理」「句点の補完」までです。メール調に直す・箇条書きに構造化するといった判断はAIにしかできません。'}
+            {settings.polishEngine !== 'none' &&
+              settings.polishEngine !== 'rules' &&
+              'フィラー除去・言い直しの整理・句読点付けをこのエンジンが担当します。'}
           </div>
+          {settings.polishEngine === 'rules' && settings.transcribeEngine !== 'webspeech' && (
+            <div className="notice warn" style={{ marginTop: 10 }}>
+              <AlertIcon className="ico" />
+              <div>
+                整形は無料ですが、文字起こしに {settings.transcribeEngine === 'gemini' ? 'Gemini' : 'OpenAI'} を使う設定のままです。
+                完全に無料・キーなしにするには、上の「文字起こし」を<strong>ブラウザ内蔵</strong>にしてください。
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="field">
