@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ConfigBanner } from './components/ConfigBanner'
 import { HistorySheet } from './components/HistorySheet'
 import { HistoryIcon, SettingsIcon, MicIcon } from './components/Icons'
 import { ModeBar } from './components/ModeBar'
@@ -48,6 +49,11 @@ export default function App() {
   const speechRef = useRef<WebSpeechTranscriber | null>(null)
   const startedAtRef = useRef(0)
   const spaceHeldRef = useRef(false)
+  /** 追記モードで直前の結果につなぐために、最新の結果を参照できるようにしておく */
+  const resultRef = useRef<Result | null>(null)
+  resultRef.current = result
+  /** ブラウザ内蔵の認識では音量が取れないので、認識結果の更新時刻で無音を判定する */
+  const lastPartialAtRef = useRef(0)
   /** 無音検出からの停止要求を、最新の stop 関数に渡すための箱 */
   const stopRef = useRef<() => void>(() => {})
 
@@ -95,6 +101,19 @@ export default function App() {
     const id = setInterval(() => setElapsedMs(performance.now() - startedAtRef.current), 200)
     return () => clearInterval(id)
   }, [phase])
+
+  // ---- ブラウザ内蔵の認識での自動停止（音量ではなく認識の途切れで判定） ----
+  useEffect(() => {
+    if (phase !== 'recording' || settings.silenceStopSec <= 0) return
+    if (settings.transcribeEngine !== 'webspeech') return
+    const limit = settings.silenceStopSec * 1000
+    const id = setInterval(() => {
+      // 一度も認識できていないうちは止めない（話し始めるまでの待ち時間を潰さないため）
+      if (!liveText) return
+      if (performance.now() - lastPartialAtRef.current > limit) stopRef.current()
+    }, 300)
+    return () => clearInterval(id)
+  }, [phase, settings.silenceStopSec, settings.transcribeEngine, liveText])
 
   const missingKey = useMemo(() => {
     const needs: string[] = []
@@ -144,17 +163,24 @@ export default function App() {
           return
         }
 
+        // 追記モードなら、今ある文章の続きとしてつなぐ
+        const previous = settings.appendMode ? resultRef.current : null
+        const joinedPolished = previous?.polished
+          ? `${previous.polished.replace(/\s+$/, '')}\n\n${out.polished}`
+          : out.polished
+        const joinedRaw = previous?.raw ? `${previous.raw.replace(/\s+$/, '')}\n${out.raw}` : out.raw
+
         setResult({
-          raw: out.raw,
-          polished: out.polished,
+          raw: joinedRaw,
+          polished: joinedPolished,
           modeName: mode.name,
           engine: out.engine,
-          costUsd: out.costUsd,
+          costUsd: (previous?.costUsd ?? 0) + out.costUsd,
         })
         setPhase('idle')
         setLiveText('')
 
-        if (settings.autoCopy) void copyText(out.polished, true)
+        if (settings.autoCopy) void copyText(joinedPolished, true)
 
         if (settings.saveHistory) {
           const item: HistoryItem = {
@@ -185,14 +211,44 @@ export default function App() {
   const startRecording = useCallback(async () => {
     if (phase !== 'idle') return
     if (missingKey.length > 0) {
-      push('err', `${missingKey.join(' と ')} の API キーが未設定です`, '設定画面からキーを登録してください。')
-      setSheet('settings')
+      // 画面上部のバナーに一発で直せるボタンを出しているので、そちらへ誘導する。
+      // ここで設定画面を開いてしまうと、何を直せばいいのか分からなくなる。
+      push(
+        'err',
+        `${missingKey.join(' と ')} の API キーが未設定です`,
+        '画面上の黄色い案内から「キーなしで無料で使う」または使えるキーを選んでください。',
+      )
       return
     }
 
     setLiveText('')
     setElapsedMs(0)
     setPending(null)
+
+    // ブラウザ内蔵の音声認識を使うときは MediaRecorder を起動しない。
+    // 同じマイクを2つの仕組みで掴むと、Chrome では認識結果が空になることがある。
+    // 録音データも使わないので、そもそも録る必要がない。
+    if (settings.transcribeEngine === 'webspeech') {
+      const speech = new WebSpeechTranscriber({
+        onPartial: (text) => {
+          setLiveText(text)
+          lastPartialAtRef.current = performance.now()
+        },
+      })
+      speechRef.current = speech
+      try {
+        speech.start(settings.spokenLang === 'ja' ? 'ja-JP' : settings.spokenLang)
+      } catch (err) {
+        speechRef.current = null
+        if (err instanceof ApiError) push('err', err.message, err.hint)
+        else push('err', 'ブラウザの音声認識を開始できませんでした')
+        return
+      }
+      startedAtRef.current = performance.now()
+      lastPartialAtRef.current = performance.now()
+      setPhase('recording')
+      return
+    }
 
     const recorder = new Recorder({
       onLevel: setLevel,
@@ -218,69 +274,91 @@ export default function App() {
       return
     }
 
-    if (settings.transcribeEngine === 'webspeech') {
-      const speech = new WebSpeechTranscriber({ onPartial: setLiveText })
-      speechRef.current = speech
-      try {
-        speech.start(settings.spokenLang === 'ja' ? 'ja-JP' : settings.spokenLang)
-      } catch (err) {
-        speechRef.current = null
-        recorder.cancel()
-        recorderRef.current = null
-        if (err instanceof ApiError) push('err', err.message, err.hint)
-        return
-      }
-    }
-
     startedAtRef.current = performance.now()
     setPhase('recording')
   }, [phase, missingKey, settings, push])
 
   const stopRecording = useCallback(async () => {
-    const recorder = recorderRef.current
-    if (!recorder || phase !== 'recording') return
-    recorderRef.current = null
-    setPhase('transcribing')
+    if (phase !== 'recording') return
+    const durationMsRaw = performance.now() - startedAtRef.current
 
-    let audio: Blob | null = null
-    let durationMs = performance.now() - startedAtRef.current
-    try {
-      const res = await recorder.stop()
-      audio = res.blob
-      durationMs = res.durationMs
-    } catch {
-      // Blob が取れなくても Web Speech 経路なら続行できる
-    }
-    setLevel(0)
-
-    let webSpeechText: string | null = null
+    // ---- ブラウザ内蔵の音声認識 ----
     const speech = speechRef.current
     if (speech) {
       speechRef.current = null
+      setPhase('transcribing')
+      let webSpeechText = ''
       try {
         webSpeechText = await speech.stop()
       } catch (err) {
         setPhase('idle')
         if (err instanceof ApiError) push('err', err.message, err.hint)
+        else push('err', '音声認識に失敗しました')
         return
       }
-      audio = null
+
+      if (!webSpeechText.trim()) {
+        // ここで黙って終わると「押しても無反応」に見えるので、必ず理由を出す
+        setPhase('idle')
+        push(
+          'err',
+          '声を認識できませんでした',
+          durationMsRaw < 1200
+            ? 'もう少し長め（2秒以上）に話してみてください。'
+            : 'マイクの許可を確認し、はっきり話してみてください。改善しない場合は設定で文字起こしを Gemini か OpenAI に切り替えると安定します。',
+        )
+        return
+      }
+
+      if (!settings.autoProcess) {
+        setPhase('idle')
+        setPending({ audio: null, webSpeechText, durationMs: durationMsRaw })
+        return
+      }
+      await runProcess(null, webSpeechText, durationMsRaw, activeMode)
+      return
     }
+
+    // ---- 録音して API に送る経路 ----
+    const recorder = recorderRef.current
+    if (!recorder) return
+    recorderRef.current = null
+    setPhase('transcribing')
+
+    let audio: Blob | null = null
+    let durationMs = durationMsRaw
+    try {
+      const res = await recorder.stop()
+      audio = res.blob
+      durationMs = res.durationMs
+    } catch {
+      setPhase('idle')
+      setLevel(0)
+      push('err', '録音データを取り出せませんでした', 'もう一度お試しください。')
+      return
+    }
+    setLevel(0)
 
     if (durationMs < 400) {
       setPhase('idle')
-      push('err', '短すぎます', 'ボタンを押したまま、1秒以上話してください。')
+      push('err', '短すぎます', '1秒以上話してください。')
+      return
+    }
+
+    if (!audio || audio.size < 1024) {
+      setPhase('idle')
+      push('err', '音声が空でした', 'マイクがミュートになっていないか確認してください。')
       return
     }
 
     if (!settings.autoProcess) {
       // 録音を手元に置いたまま待つ。モードを選び直してから変換できる。
       setPhase('idle')
-      setPending({ audio, webSpeechText, durationMs })
+      setPending({ audio, webSpeechText: null, durationMs })
       return
     }
 
-    await runProcess(audio, webSpeechText, durationMs, activeMode)
+    await runProcess(audio, null, durationMs, activeMode)
   }, [phase, settings.autoProcess, activeMode, runProcess, push])
 
   stopRef.current = () => void stopRecording()
@@ -311,12 +389,29 @@ export default function App() {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space' || e.repeat || isTyping() || sheet !== 'none' || editingMode !== undefined) return
+      if (sheet !== 'none' || editingMode !== undefined) return
+
+      // 右 Alt は押すたびに開始／停止を切り替える。文字を打つキーではないので、
+      // テキスト編集中でも受け付けてよい。
+      if (e.code === 'AltRight') {
+        if (e.repeat) return
+        e.preventDefault()
+        if (phase === 'recording') void stopRecording()
+        else if (phase === 'idle') void startRecording()
+        return
+      }
+
+      if (e.code !== 'Space' || e.repeat || isTyping()) return
       e.preventDefault()
       spaceHeldRef.current = true
       if (phase === 'idle') void startRecording()
     }
     const onKeyUp = (e: KeyboardEvent) => {
+      // 右 Alt はトグルなので、離したときは何もしない（メニューへのフォーカス移動だけ止める）
+      if (e.code === 'AltRight') {
+        e.preventDefault()
+        return
+      }
       if (e.code !== 'Space' || !spaceHeldRef.current) return
       spaceHeldRef.current = false
       e.preventDefault()
@@ -338,6 +433,23 @@ export default function App() {
     setPending(null)
     void runProcess(audio, webSpeechText, durationMs, activeMode)
   }, [pending, activeMode, runProcess])
+
+  const handleAddToDictionary = useCallback(
+    (term: string) => {
+      const trimmed = term.trim()
+      if (!trimmed) {
+        push('err', '語が選択されていません', '結果のテキストで直したい語をなぞって選んでから押してください。')
+        return
+      }
+      if (settings.dictionary.some((d) => d.term === trimmed)) {
+        push('ok', `「${trimmed}」はすでに辞書にあります`)
+        return
+      }
+      patch({ dictionary: [...settings.dictionary, { term: trimmed }] })
+      push('ok', `「${trimmed}」を辞書に追加しました`, '次からはこの表記に直されます')
+    },
+    [settings.dictionary, patch, push],
+  )
 
   const handleRepolish = useCallback(() => {
     if (!result?.raw) return
@@ -432,6 +544,18 @@ export default function App() {
         disabled={phase !== 'idle'}
       />
 
+      {missingKey.length > 0 && (
+        <ConfigBanner
+          missing={missingKey}
+          settings={settings}
+          onApply={(p) => {
+            patch(p)
+            push('ok', '設定を切り替えました', 'マイクを押せば使えます')
+          }}
+          onOpenSettings={() => setSheet('settings')}
+        />
+      )}
+
       <RecordStage
         phase={phase}
         level={level}
@@ -466,11 +590,14 @@ export default function App() {
           engine={result.engine}
           costUsd={result.costUsd}
           busy={busy}
+          appendMode={settings.appendMode}
           onChange={(text) => setResult((r) => (r ? { ...r, polished: text } : r))}
           onCopy={() => void copyText(result.polished)}
           onShare={handleShare}
           onRepolish={handleRepolish}
           onClear={() => setResult(null)}
+          onToggleAppend={() => patch({ appendMode: !settings.appendMode })}
+          onAddToDictionary={handleAddToDictionary}
         />
       )}
 

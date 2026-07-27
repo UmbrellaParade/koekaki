@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dictionary: [],
   styleSample: '',
   autoProcess: true,
+  appendMode: false,
   autoCopy: false,
   silenceStopSec: 0,
   saveHistory: true,

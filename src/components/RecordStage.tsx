@@ -41,15 +41,17 @@ export function RecordStage({
 
   // 音量に合わせてリングを膨らませる。1.0〜1.45 の範囲に収めると煩くならない。
   const ringScale = recording ? 1 + Math.min(level, 1) * 0.45 : 1
+  // ブラウザ内蔵の認識では音量が取れないため、代わりに一定周期で脈打たせる
+  const usePulse = recording && level === 0
 
   return (
     <section className={`stage${compact ? ' compact' : ''}`}>
       <div className="mic-wrap">
         <span
-          className="mic-ring"
+          className={`mic-ring${usePulse ? ' pulse' : ''}`}
           style={{
-            transform: `scale(${ringScale})`,
-            opacity: recording ? 0.35 + level * 0.65 : 0,
+            transform: usePulse ? undefined : `scale(${ringScale})`,
+            opacity: recording ? (usePulse ? undefined : 0.35 + level * 0.65) : 0,
             borderColor: 'var(--rec)',
             borderWidth: 3,
           }}
@@ -95,7 +97,7 @@ export function RecordStage({
 
       {showKeyboardHint && phase === 'idle' && !disabled && (
         <p className="hint">
-          <kbd>Space</kbd> 長押しでも録音できます
+          <kbd>右Alt</kbd> で開始／停止　・　<kbd>Space</kbd> 長押しでも録音できます
         </p>
       )}
     </section>

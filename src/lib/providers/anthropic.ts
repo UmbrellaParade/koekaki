@@ -15,6 +15,34 @@ function hint(status: number): string | undefined {
   return undefined
 }
 
+/** このキーで使えるモデルを取得する */
+export async function anthropicListModels(apiKey: string): Promise<string[]> {
+  if (!apiKey) throw new ApiError('Anthropic の API キーが設定されていません', 'anthropic')
+
+  let res: Response
+  try {
+    res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+    })
+  } catch {
+    throw new ApiError('Anthropic に接続できませんでした', 'anthropic', undefined, 'ネットワーク接続を確認してください。')
+  }
+
+  const data = (await res.json().catch(() => ({}))) as {
+    data?: Array<{ id?: string }>
+    error?: { message?: string }
+  }
+  if (!res.ok) {
+    throw new ApiError(data.error?.message ?? `Anthropic エラー (HTTP ${res.status})`, 'anthropic', res.status, hint(res.status))
+  }
+
+  return (data.data ?? []).map((m) => m.id ?? '').filter(Boolean).sort()
+}
+
 /**
  * Claude は音声入力を受け付けないため、整形フェーズ専用。
  * ブラウザから直接叩くには anthropic-dangerous-direct-browser-access が必要。

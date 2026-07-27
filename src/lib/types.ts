@@ -58,6 +58,8 @@ export interface Settings {
   styleSample: string
   /** 録音を止めたら自動で整形まで走らせる */
   autoProcess: boolean
+  /** 既に結果があるとき、次の録音を置き換えずに末尾へ足す */
+  appendMode: boolean
   /** 結果が出たら自動でクリップボードにコピー */
   autoCopy: boolean
   /** 無音が続いたら自動で録音停止（秒。0 で無効） */

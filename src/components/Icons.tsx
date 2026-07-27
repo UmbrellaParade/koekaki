@@ -124,6 +124,13 @@ export const AlertIcon = ({ size = 17, className }: IconProps) => (
   </svg>
 )
 
+export const BookIcon = ({ size = 15, className }: IconProps) => (
+  <svg {...base(size)} className={className} aria-hidden="true">
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
+  </svg>
+)
+
 export const SparkIcon = ({ size = 17, className }: IconProps) => (
   <svg {...base(size)} className={className} aria-hidden="true">
     <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" />

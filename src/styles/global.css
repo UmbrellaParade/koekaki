@@ -249,6 +249,21 @@ p {
   pointer-events: none;
 }
 
+.mic-ring.pulse {
+  animation: ring-pulse 1.5s ease-out infinite;
+}
+
+@keyframes ring-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(1.42);
+    opacity: 0;
+  }
+}
+
 .mic-btn {
   position: relative;
   width: 96px;
@@ -454,6 +469,20 @@ p {
   padding: 10px 12px;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
+}
+
+.insert-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+  flex-wrap: wrap;
+}
+
+.insert-row .btn {
+  min-width: 42px;
 }
 
 .raw-box {
@@ -889,6 +918,14 @@ p {
 
 .notice .ico {
   flex: none;
+}
+
+.config-banner {
+  align-items: flex-start;
+}
+
+.config-banner > div {
+  min-width: 0;
 }
 
 /* ===== オンボーディング ===== */

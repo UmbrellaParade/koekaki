@@ -61,6 +61,33 @@ export async function openaiTranscribe(
   }
 }
 
+/**
+ * このキーで使えるモデルを取得する。
+ * kind で「音声書き起こし向け」「テキスト整形向け」に絞る。
+ */
+export async function openaiListModels(apiKey: string, kind: 'audio' | 'text'): Promise<string[]> {
+  if (!apiKey) throw new ApiError('OpenAI の API キーが設定されていません', 'openai')
+
+  let res: Response
+  try {
+    res = await fetch(`${BASE}/models`, { headers: { Authorization: `Bearer ${apiKey}` } })
+  } catch {
+    throw new ApiError('OpenAI に接続できませんでした', 'openai', undefined, 'ネットワーク接続を確認してください。')
+  }
+  if (!res.ok) throw new ApiError(await readError(res), 'openai', res.status, hint(res.status))
+
+  const data = (await res.json()) as { data?: Array<{ id?: string }> }
+  const ids = (data.data ?? []).map((m) => m.id ?? '').filter(Boolean)
+
+  if (kind === 'audio') {
+    return ids.filter((id) => /whisper|transcribe/.test(id)).sort()
+  }
+  return ids
+    .filter((id) => /^(gpt|o[0-9]|chatgpt)/.test(id))
+    .filter((id) => !/audio|realtime|transcribe|tts|search|image|moderation|embedding|instruct|dall/.test(id))
+    .sort()
+}
+
 /** テキスト整形 */
 export async function openaiPolish(
   apiKey: string,

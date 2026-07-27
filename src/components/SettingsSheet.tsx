@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { AUDIO_PRICES, TEXT_PRICES } from '../lib/cost'
 import { testProviderKey } from '../lib/pipeline'
+import { anthropicListModels } from '../lib/providers/anthropic'
+import { geminiListModels } from '../lib/providers/gemini'
+import { openaiListModels } from '../lib/providers/openai'
 import { isWebSpeechSupported } from '../lib/providers/webspeech'
 import { exportSettings, importSettings } from '../lib/storage'
 import type { PolishEngine, ProviderId, Settings, TranscribeEngine } from '../lib/types'
 import { ApiError } from '../lib/types'
-import { AlertIcon, EyeIcon, EyeOffIcon, LoaderIcon, PlusIcon, TrashIcon } from './Icons'
+import { AlertIcon, EyeIcon, EyeOffIcon, LoaderIcon, PlusIcon, RefreshIcon, SparkIcon, TrashIcon } from './Icons'
 import { Segmented, Sheet, SwitchRow } from './Sheet'
 
 interface SettingsSheetProps {
@@ -54,6 +57,11 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [testing, setTesting] = useState<ProviderId | null>(null)
   const webSpeechOk = isWebSpeechSupported()
+  /** 文字起こしと整形が同じ Gemini モデルなら、1リクエストで済む経路に乗る */
+  const geminiFastPath = settings.models.geminiTranscribe === settings.models.geminiPolish
+  const keylessPreset = settings.transcribeEngine === 'webspeech' && settings.polishEngine === 'rules'
+  const aiPreset = settings.transcribeEngine === 'gemini' && settings.polishEngine === 'gemini'
+  const openaiPreset = settings.transcribeEngine === 'openai' && settings.polishEngine === 'openai'
 
   const testKey = async (provider: ProviderId) => {
     setTesting(provider)
@@ -68,8 +76,29 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
     }
   }
 
-  const setKey = (provider: ProviderId, value: string) =>
-    onChange({ apiKeys: { ...settings.apiKeys, [provider]: value.trim() } })
+  /**
+   * キーを保存する。
+   * このとき、いま選んでいるエンジンがキー未設定の provider を指したままだと
+   * 「キーを入れたのにまだ使えない」状態になるので、入れた provider に向け直す。
+   */
+  const setKey = (provider: ProviderId, value: string) => {
+    const trimmed = value.trim()
+    const nextKeys = { ...settings.apiKeys, [provider]: trimmed }
+    const patch: Partial<Settings> = { apiKeys: nextKeys }
+
+    const engineProviderHasKey = (engine: string) =>
+      engine === 'webspeech' || engine === 'rules' || engine === 'none'
+        ? true
+        : Boolean(nextKeys[engine as ProviderId]?.trim())
+
+    if (trimmed && !engineProviderHasKey(settings.transcribeEngine) && provider !== 'anthropic') {
+      patch.transcribeEngine = provider as TranscribeEngine
+    }
+    if (trimmed && !engineProviderHasKey(settings.polishEngine)) {
+      patch.polishEngine = provider as PolishEngine
+    }
+    onChange(patch)
+  }
 
   const setModel = (key: keyof Settings['models'], value: string) =>
     onChange({ models: { ...settings.models, [key]: value } })
@@ -156,6 +185,40 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
       <div className="section">
         <div className="section-title">エンジン</div>
 
+        {/* 無料構成は2か所を同時に変える必要があり、片方だけだと無料にならない。
+            間違えようがないように、ワンタップの切り替えを置いておく。 */}
+        <div className="field">
+          <span className="field-label">かんたん切り替え</span>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <button
+              className={`btn sm${keylessPreset ? ' primary' : ''}`}
+              disabled={!webSpeechOk}
+              onClick={() => onChange({ transcribeEngine: 'webspeech', polishEngine: 'rules' })}
+            >
+              {keylessPreset ? '✓ ' : ''}完全無料（キー不要）
+            </button>
+            <button
+              className={`btn sm${aiPreset ? ' primary' : ''}`}
+              disabled={!settings.apiKeys.gemini}
+              onClick={() => onChange({ transcribeEngine: 'gemini', polishEngine: 'gemini' })}
+            >
+              {aiPreset ? '✓ ' : ''}Gemini（おすすめ）
+            </button>
+            <button
+              className={`btn sm${openaiPreset ? ' primary' : ''}`}
+              disabled={!settings.apiKeys.openai}
+              onClick={() => onChange({ transcribeEngine: 'openai', polishEngine: 'openai' })}
+            >
+              {openaiPreset ? '✓ ' : ''}OpenAI
+            </button>
+          </div>
+          <div className="desc">
+            {!webSpeechOk && '※ このブラウザは内蔵音声認識に対応していないため、完全無料の構成は選べません。'}
+            {webSpeechOk &&
+              '「完全無料」は文字起こしと整形の両方をキー不要の方式に切り替えます。下の2つを個別に変えるより確実です。'}
+          </div>
+        </div>
+
         <div className="field">
           <span className="field-label">文字起こし（音声 → 文字）</span>
           <Segmented<TranscribeEngine>
@@ -213,17 +276,25 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
 
         <div className="field">
           <span className="field-label">モデル</span>
-          <div style={{ display: 'grid', gap: 10 }}>
-            {(settings.transcribeEngine === 'gemini' || settings.polishEngine === 'gemini') && (
+          <div style={{ display: 'grid', gap: 12 }}>
+            {settings.transcribeEngine === 'gemini' && (
               <ModelInput
-                label="Gemini"
+                label="Gemini 文字起こし"
+                value={settings.models.geminiTranscribe}
+                options={GEMINI_MODELS}
+                onChange={(v) => setModel('geminiTranscribe', v)}
+                onFetch={() => geminiListModels(settings.apiKeys.gemini)}
+                onNotify={onNotify}
+              />
+            )}
+            {settings.polishEngine === 'gemini' && (
+              <ModelInput
+                label="Gemini 整形"
                 value={settings.models.geminiPolish}
                 options={GEMINI_MODELS}
-                onChange={(v) => {
-                  // 音声と整形を同じモデルに揃えると一括処理の速い経路に乗る
-                  setModel('geminiPolish', v)
-                  setModel('geminiTranscribe', v)
-                }}
+                onChange={(v) => setModel('geminiPolish', v)}
+                onFetch={() => geminiListModels(settings.apiKeys.gemini)}
+                onNotify={onNotify}
               />
             )}
             {settings.transcribeEngine === 'openai' && (
@@ -232,6 +303,8 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
                 value={settings.models.openaiTranscribe}
                 options={OPENAI_AUDIO_MODELS}
                 onChange={(v) => setModel('openaiTranscribe', v)}
+                onFetch={() => openaiListModels(settings.apiKeys.openai, 'audio')}
+                onNotify={onNotify}
               />
             )}
             {settings.polishEngine === 'openai' && (
@@ -240,6 +313,8 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
                 value={settings.models.openaiPolish}
                 options={OPENAI_TEXT_MODELS}
                 onChange={(v) => setModel('openaiPolish', v)}
+                onFetch={() => openaiListModels(settings.apiKeys.openai, 'text')}
+                onNotify={onNotify}
               />
             )}
             {settings.polishEngine === 'anthropic' && (
@@ -248,10 +323,25 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
                 value={settings.models.anthropicPolish}
                 options={CLAUDE_MODELS}
                 onChange={(v) => setModel('anthropicPolish', v)}
+                onFetch={() => anthropicListModels(settings.apiKeys.anthropic)}
+                onNotify={onNotify}
               />
             )}
           </div>
-          <div className="desc">一覧にないモデル名を直接入力することもできます。</div>
+          <div className="desc">
+            「一覧」を押すと、そのキーで<strong>実際に使えるモデル</strong>を各社から取得して並べます。上位モデルを選べば精度が上がり、
+            そのぶん料金も上がります。名前を直接入力しても構いません。
+          </div>
+          {settings.transcribeEngine === 'gemini' && settings.polishEngine === 'gemini' && (
+            <div className={geminiFastPath ? 'notice' : 'notice warn'} style={{ marginTop: 10 }}>
+              {geminiFastPath ? <SparkIcon className="ico" /> : <AlertIcon className="ico" />}
+              <div>
+                {geminiFastPath
+                  ? '文字起こしと整形が同じモデルなので、1回のリクエストで完結する高速・低コスト経路で動きます。'
+                  : '文字起こしと整形でモデルが違うため、リクエストが2回に分かれます（少し遅く、少し高くなります）。整形だけ上位モデルにしたい場合はこのままで問題ありません。'}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="field">
@@ -279,6 +369,12 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
           desc="オフにすると、停止後に自分で変換ボタンを押す形になります。"
           checked={settings.autoProcess}
           onChange={(v) => onChange({ autoProcess: v })}
+        />
+        <SwitchRow
+          title="続けて話したら書き足す"
+          desc="オンにすると、次の録音が今の文章を置き換えずに末尾へ追加されます。長い文章を何回かに分けて吹き込むときに便利です。"
+          checked={settings.appendMode}
+          onChange={(v) => onChange({ appendMode: v })}
         />
         <SwitchRow
           title="変換できたら自動でコピー"
@@ -316,6 +412,7 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
         <div className="section-title">ユーザー辞書</div>
         <div className="desc" style={{ marginBottom: 12 }}>
           人名・作品名・専門用語など、誤変換されやすい言葉を登録しておくと、AI が正しい表記に直します。
+          結果画面で語を選択して「辞書に追加」を押すと、ここに素早く登録できます。
         </div>
         <DictionaryEditor settings={settings} onChange={onChange} />
       </div>
@@ -391,31 +488,78 @@ function ModelInput({
   value,
   options,
   onChange,
+  onFetch,
+  onNotify,
 }: {
   label: string
   value: string
+  /** 取得前に見せる、よく使うモデルの候補 */
   options: string[]
   onChange: (v: string) => void
+  /** キーを使って実際に使えるモデル一覧を取ってくる */
+  onFetch: () => Promise<string[]>
+  onNotify: (kind: 'ok' | 'err', message: string, hint?: string) => void
 }) {
-  const listId = `models-${label.replace(/\s/g, '-')}`
+  const listId = `models-${label.replace(/[\s（）]/g, '-')}`
+  const [fetched, setFetched] = useState<string[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const fetchModels = async () => {
+    setLoading(true)
+    try {
+      const models = await onFetch()
+      setFetched(models)
+      onNotify('ok', `${models.length} 個のモデルが使えます`, '一覧から選べます')
+    } catch (err) {
+      if (err instanceof ApiError) onNotify('err', err.message, err.hint)
+      else onNotify('err', 'モデル一覧を取得できませんでした')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const suggestions = fetched ?? options
+
   return (
     <div>
       <span className="field-label" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-dim)' }}>
         {label}
       </span>
-      <input
-        className="input mono"
-        value={value}
-        list={listId}
-        onChange={(e) => onChange(e.target.value.trim())}
-        spellCheck={false}
-        autoComplete="off"
-      />
+      <div className="row">
+        <input
+          className="input mono"
+          value={value}
+          list={listId}
+          onChange={(e) => onChange(e.target.value.trim())}
+          spellCheck={false}
+          autoComplete="off"
+        />
+        <button className="btn sm" onClick={() => void fetchModels()} disabled={loading} style={{ flex: 'none' }}>
+          {loading ? <LoaderIcon size={14} className="spin" /> : <RefreshIcon size={14} />}
+          一覧
+        </button>
+      </div>
       <datalist id={listId}>
-        {options.map((o) => (
+        {suggestions.map((o) => (
           <option key={o} value={o} />
         ))}
       </datalist>
+
+      {fetched && (
+        <select
+          className="select"
+          style={{ marginTop: 6 }}
+          value={fetched.includes(value) ? value : ''}
+          onChange={(e) => e.target.value && onChange(e.target.value)}
+        >
+          <option value="">使えるモデルから選ぶ…</option>
+          {fetched.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   )
 }

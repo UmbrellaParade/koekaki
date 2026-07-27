@@ -158,6 +158,36 @@ export async function geminiPolish(
   return { polished: text.trim(), usage }
 }
 
+/**
+ * このキーで実際に使えるモデルを取得する。
+ * モデル名は頻繁に増減するので、こちらで一覧を持たずに毎回聞く。
+ */
+export async function geminiListModels(apiKey: string): Promise<string[]> {
+  if (!apiKey) throw new ApiError('Gemini の API キーが設定されていません', 'gemini')
+
+  let res: Response
+  try {
+    res = await fetch(`${ENDPOINT}?pageSize=200`, { headers: { 'x-goog-api-key': apiKey } })
+  } catch {
+    throw new ApiError('Gemini に接続できませんでした', 'gemini', undefined, 'ネットワーク接続を確認してください。')
+  }
+
+  const data = (await res.json().catch(() => ({}))) as {
+    models?: Array<{ name?: string; supportedGenerationMethods?: string[] }>
+    error?: { message?: string }
+  }
+  if (!res.ok) {
+    const message = data.error?.message ?? `Gemini エラー (HTTP ${res.status})`
+    throw new ApiError(message, 'gemini', res.status, geminiHint(res.status, message))
+  }
+
+  return (data.models ?? [])
+    .filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'))
+    .map((m) => (m.name ?? '').replace(/^models\//, ''))
+    .filter((n) => n && !n.includes('embedding') && !n.includes('aqa') && !n.includes('imagen'))
+    .sort()
+}
+
 /** モデルが LLM の癖でコードブロックを付けてきても拾えるようにする */
 export function parseJsonLoose(text: string): { raw?: unknown; polished?: unknown } | null {
   const trimmed = text.trim()
