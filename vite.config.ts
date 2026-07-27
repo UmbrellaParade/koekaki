@@ -6,8 +6,17 @@ import { VitePWA } from 'vite-plugin-pwa'
 // 独自ドメインに載せ替える場合は BASE_PATH=/ を渡してビルドする。
 const base = process.env.BASE_PATH ?? '/koekaki/'
 
+// 画面に出す版数。古いキャッシュを見ていないか、目視で確認できるようにする。
+const buildId = new Date()
+  .toISOString()
+  .slice(0, 16)
+  .replace('T', ' ')
+
 export default defineConfig({
   base,
+  define: {
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
   plugins: [
     react(),
     VitePWA({

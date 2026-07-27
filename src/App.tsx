@@ -13,7 +13,7 @@ import { formatDuration } from './lib/audio'
 import { addHistory, clearHistory, deleteHistory, listHistory } from './lib/db'
 import { processRecording } from './lib/pipeline'
 import { allModes, findMode } from './lib/prompts'
-import { WebSpeechTranscriber } from './lib/providers/webspeech'
+import { WebSpeechTranscriber, type SpeechDiagnostic } from './lib/providers/webspeech'
 import { Recorder } from './lib/recorder'
 import { loadSettings, saveSettings } from './lib/storage'
 import type { HistoryItem, Mode, Settings } from './lib/types'
@@ -39,6 +39,8 @@ export default function App() {
     null,
   )
   const [history, setHistory] = useState<HistoryItem[]>([])
+  /** 直近の音声認識で何が返ってきたか。実機の不具合を追うための記録 */
+  const [diagnostics, setDiagnostics] = useState<SpeechDiagnostic[]>([])
   const [sheet, setSheet] = useState<'none' | 'settings' | 'history' | 'onboarding'>(
     () => (loadSettings().onboarded ? 'none' : 'onboarding'),
   )
@@ -234,6 +236,9 @@ export default function App() {
           setLiveText(text)
           lastPartialAtRef.current = performance.now()
         },
+        // 単発モード（スマホ）では、話し終わるとブラウザ側が認識を終える。
+        // それをそのまま録音の終了として扱う。
+        onAutoEnd: () => stopRef.current(),
       })
       speechRef.current = speech
       try {
@@ -291,11 +296,14 @@ export default function App() {
       try {
         webSpeechText = await speech.stop()
       } catch (err) {
+        setDiagnostics(speech.getDiagnostics())
         setPhase('idle')
         if (err instanceof ApiError) push('err', err.message, err.hint)
         else push('err', '音声認識に失敗しました')
         return
       }
+      // 実機で何が返ってきたのかを、あとから設定画面で確認できるようにしておく
+      setDiagnostics(speech.getDiagnostics())
 
       if (!webSpeechText.trim()) {
         // ここで黙って終わると「押しても無反応」に見えるので、必ず理由を出す
@@ -608,6 +616,7 @@ export default function App() {
           onClose={() => setSheet('none')}
           onClearHistory={handleClearHistory}
           onNotify={push}
+          diagnostics={diagnostics}
         />
       )}
 

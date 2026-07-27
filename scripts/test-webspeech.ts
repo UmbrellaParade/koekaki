@@ -139,5 +139,59 @@ function check(label: string, actual: string, expected: string) {
   check('セッションをまたいでも連結される', await t.stop(), '前半の内容です後半の内容です')
 }
 
-console.log(failed === 0 ? '\n全 4 件 通過' : `\n${failed} 件 失敗`)
+// --- 5. 単発モード（スマホ）: 再開しないので重複が起きえない ---
+{
+  let autoEnded = 0
+  const t = new WebSpeechTranscriber({ onAutoEnd: () => autoEnded++ })
+  t.start('ja-JP', true)
+  const rec = FakeRecognition.latest!
+  const startedAtBegin = rec.started
+
+  rec.emit([{ text: '今、精度を確かめています', final: true }], 0)
+  rec.onend?.() // ブラウザが話し終わりを検知して終了
+
+  await new Promise((r) => setTimeout(r, 600)) // 再開猶予より長く待つ
+
+  if (rec.started !== startedAtBegin) {
+    failed++
+    console.log('  FAIL 単発モードでは再開しない')
+    console.log(`       start() が ${rec.started - startedAtBegin} 回追加で呼ばれた`)
+  } else {
+    console.log('  OK   単発モードでは再開しない')
+  }
+
+  if (autoEnded !== 1) {
+    failed++
+    console.log(`  FAIL 単発モードで onAutoEnd が1回呼ばれる（実際 ${autoEnded} 回）`)
+  } else {
+    console.log('  OK   単発モードで onAutoEnd が1回呼ばれる')
+  }
+
+  check('単発モードの結果が重複しない', await t.stop(), '今、精度を確かめています')
+}
+
+// --- 6. 実機で出た羅列の形が、最終出力でならされる ---
+{
+  const t = new WebSpeechTranscriber()
+  t.start('ja-JP')
+  const rec = FakeRecognition.latest!
+  // 同じ確定文が繰り返し積まれていく最悪のパターン
+  for (let i = 0; i < 7; i++) {
+    rec.emit([{ text: '今 制度のチェックしてます', final: true }], 0)
+    rec.onend?.()
+    await new Promise((r) => setTimeout(r, 5))
+  }
+  const out = await t.stop()
+  const count = out.split('制度のチェックしてます').length - 1
+  if (count === 1) {
+    console.log('  OK   セッションが何度切れても1回分に収まる')
+    console.log(`       ${JSON.stringify(out)}`)
+  } else {
+    failed++
+    console.log(`  FAIL セッションが何度切れても1回分に収まる（${count} 回残った）`)
+    console.log(`       ${JSON.stringify(out)}`)
+  }
+}
+
+console.log(failed === 0 ? '\n全 8 件 通過' : `\n${failed} 件 失敗`)
 process.exit(failed === 0 ? 0 : 1)

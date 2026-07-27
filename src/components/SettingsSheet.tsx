@@ -4,7 +4,7 @@ import { testProviderKey } from '../lib/pipeline'
 import { anthropicListModels } from '../lib/providers/anthropic'
 import { geminiListModels } from '../lib/providers/gemini'
 import { openaiListModels } from '../lib/providers/openai'
-import { isWebSpeechSupported } from '../lib/providers/webspeech'
+import { isWebSpeechSupported, prefersSingleShot, type SpeechDiagnostic } from '../lib/providers/webspeech'
 import { exportSettings, importSettings } from '../lib/storage'
 import type { PolishEngine, ProviderId, Settings, TranscribeEngine } from '../lib/types'
 import { ApiError } from '../lib/types'
@@ -17,6 +17,31 @@ interface SettingsSheetProps {
   onClose: () => void
   onClearHistory: () => void
   onNotify: (kind: 'ok' | 'err', message: string, hint?: string) => void
+  diagnostics: SpeechDiagnostic[]
+}
+
+/**
+ * Service Worker とキャッシュを捨てて読み込み直す。
+ *
+ * ホーム画面に追加した PWA は、アプリを完全に終了しないと古いコードのまま動き続ける。
+ * 「直したはずの不具合が消えない」の原因がこれだったことがあるので、
+ * 利用者が自分で確実に更新できる手段を用意しておく。
+ */
+async function forceUpdate(): Promise<void> {
+  try {
+    const regs = await navigator.serviceWorker?.getRegistrations?.()
+    await Promise.all((regs ?? []).map((r) => r.unregister()))
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys()
+      await Promise.all(keys.map((k) => caches.delete(k)))
+    }
+  } catch {
+    // 消せなくても、とにかく読み込み直す
+  }
+  // クエリを変えて、キャッシュを迂回して取り直す
+  const url = new URL(window.location.href)
+  url.searchParams.set('u', Date.now().toString(36))
+  window.location.replace(url.toString())
 }
 
 const KEY_INFO: Record<ProviderId, { label: string; url: string; note: string }> = {
@@ -53,7 +78,30 @@ const LANGS: Array<{ value: string; label: string }> = [
   { value: 'de', label: 'Deutsch' },
 ]
 
-export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onNotify }: SettingsSheetProps) {
+export function SettingsSheet({
+  settings,
+  onChange,
+  onClose,
+  onClearHistory,
+  onNotify,
+  diagnostics,
+}: SettingsSheetProps) {
+  const copyDiagnostics = async () => {
+    const body = [
+      `build: ${__BUILD_ID__}`,
+      `ua: ${navigator.userAgent}`,
+      `engines: ${settings.transcribeEngine} -> ${settings.polishEngine}`,
+      '',
+      ...diagnostics.map((d) => `[${d.kind}] ${d.detail}`),
+    ].join('\n')
+    try {
+      await navigator.clipboard.writeText(body)
+      onNotify('ok', '診断ログをコピーしました', 'そのまま貼り付けて共有できます')
+    } catch {
+      onNotify('err', 'コピーできませんでした')
+    }
+  }
+
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [testing, setTesting] = useState<ProviderId | null>(null)
   const webSpeechOk = isWebSpeechSupported()
@@ -278,7 +326,20 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
             <strong style={{ color: webSpeechOk ? 'var(--ok)' : 'var(--warn)' }}>
               {webSpeechOk ? '使えます' : '使えません'}
             </strong>
+            {webSpeechOk && (
+              <>
+                {' ／ 認識方式：'}
+                <strong>{prefersSingleShot() ? '単発（スマホ向け）' : '連続（PC向け）'}</strong>
+              </>
+            )}
           </div>
+          {webSpeechOk && prefersSingleShot() && (
+            <div className="desc" style={{ marginTop: 6 }}>
+              スマホでは、話し終わって少し黙ると自動で録音が終わります。連続認識はスマホだと同じ文を
+              何度も返す不具合が起きるため、あえて使っていません。続きを話したいときは、
+              「続けて話す」をオンにしてもう一度マイクを押してください。
+            </div>
+          )}
         </div>
 
         <div className="field">
@@ -543,8 +604,45 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
       <div className="section" style={{ marginBottom: 0 }}>
         <div className="section-title">こえかきについて</div>
         <div className="desc">
-          バージョン 1.0.0 ／ 音声はブラウザから各AI社へ直接送られ、こえかき側のサーバーを経由しません。録音した音声データは
+          音声はブラウザから各AI社へ直接送られ、こえかき側のサーバーを経由しません。録音した音声データは
           変換が終わった時点で破棄され、端末にも残りません。
+        </div>
+
+        <div className="field" style={{ marginTop: 14 }}>
+          <span className="field-label">この端末で動いている版</span>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <code
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 13,
+                background: 'var(--surface-2)',
+                padding: '6px 10px',
+                borderRadius: 8,
+              }}
+            >
+              {__BUILD_ID__}
+            </code>
+            <button className="btn sm" onClick={() => void forceUpdate()}>
+              最新版に更新
+            </button>
+          </div>
+          <div className="desc">
+            スマホに追加したアプリは古い版が残ることがあります。直したはずの不具合が続くときは、
+            まずここの日時を確認して「最新版に更新」を押してください。
+          </div>
+        </div>
+
+        <div className="field">
+          <span className="field-label">音声認識の診断</span>
+          <div className="desc" style={{ marginBottom: 8 }}>
+            直近の録音で、ブラウザが実際に何を返したかの記録です（{diagnostics.length} 件）。
+            スマホ特有の不具合を調べるときに使います。
+          </div>
+          <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <button className="btn sm" onClick={() => void copyDiagnostics()} disabled={diagnostics.length === 0}>
+              診断ログをコピー
+            </button>
+          </div>
         </div>
       </div>
     </Sheet>
