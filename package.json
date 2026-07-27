@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "node --experimental-strip-types scripts/test-rule-polish.ts && node --experimental-strip-types scripts/test-webspeech.ts",
+    "test:hotkey": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File electron/hotkey.ps1 -SelfTest",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false"
   },
   "dependencies": {
