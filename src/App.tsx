@@ -568,7 +568,8 @@ export default function App() {
         phase={phase}
         level={level}
         elapsedMs={elapsedMs}
-        liveText={liveText}
+        liveText={settings.showLiveText ? liveText : ''}
+        speechDetected={liveText.trim().length > 0}
         compact={result !== null}
         disabled={false}
         onToggle={toggleRecording}

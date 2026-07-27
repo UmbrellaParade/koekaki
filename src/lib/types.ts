@@ -62,6 +62,11 @@ export interface Settings {
   autoProcess: boolean
   /** 既に結果があるとき、次の録音を置き換えずに末尾へ足す */
   appendMode: boolean
+  /**
+   * 話している最中に、認識途中の文字を画面に出す。
+   * 途中経過は必ず乱れるので既定では出さない（Apple のディクテーションと同じ考え方）。
+   */
+  showLiveText: boolean
   /** 結果が出たら自動でクリップボードにコピー */
   autoCopy: boolean
   /** 無音が続いたら自動で録音停止（秒。0 で無効） */

@@ -332,6 +332,11 @@ p {
   padding: 0 8px;
 }
 
+.live-text.subtle {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
 .stage-actions {
   display: flex;
   gap: 10px;

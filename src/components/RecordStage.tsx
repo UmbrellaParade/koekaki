@@ -7,7 +7,10 @@ interface RecordStageProps {
   phase: Phase
   level: number
   elapsedMs: number
+  /** 認識途中の文字。設定で表示をオフにしているときは空で渡ってくる */
   liveText: string
+  /** 声が拾えているか。文字を出さないときの安心材料として使う */
+  speechDetected: boolean
   compact: boolean
   disabled: boolean
   disabledReason?: string
@@ -28,6 +31,7 @@ export function RecordStage({
   level,
   elapsedMs,
   liveText,
+  speechDetected,
   compact,
   disabled,
   disabledReason,
@@ -85,7 +89,15 @@ export function RecordStage({
         )}
       </div>
 
-      {liveText && <div className="live-text">{liveText}</div>}
+      {/*
+        認識途中の文字は必ず乱れる（同じ語が並ぶ、途中で書き換わる）ので、既定では出さない。
+        代わりに「拾えている」ことだけ伝える。仕上がりは停止後にまとめて見せる。
+      */}
+      {liveText ? (
+        <div className="live-text">{liveText}</div>
+      ) : (
+        recording && <div className="live-text subtle">{speechDetected ? '声を拾っています' : '話しかけてください'}</div>
+      )}
 
       {recording && (
         <div className="stage-actions">

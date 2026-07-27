@@ -494,6 +494,12 @@ export function SettingsSheet({
           onChange={(v) => onChange({ autoProcess: v })}
         />
         <SwitchRow
+          title="話している最中の文字を表示する"
+          desc="認識の途中経過は、同じ語が並んだり書き換わったりして必ず乱れます。見ていて不安になるので既定では出しません。停止したあとに、整った文章だけをお見せします。"
+          checked={settings.showLiveText}
+          onChange={(v) => onChange({ showLiveText: v })}
+        />
+        <SwitchRow
           title="続けて話したら書き足す"
           desc="オンにすると、次の録音が今の文章を置き換えずに末尾へ追加されます。長い文章を何回かに分けて吹き込むときに便利です。"
           checked={settings.appendMode}

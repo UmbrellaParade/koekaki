@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   styleSample: '',
   autoProcess: true,
   appendMode: false,
+  showLiveText: false,
   autoCopy: false,
   silenceStopSec: 0,
   saveHistory: true,
