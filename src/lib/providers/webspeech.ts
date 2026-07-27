@@ -1,4 +1,4 @@
-import { collapseRepeatedSegments } from '../dedupe.ts'
+import { appendWithoutOverlap, collapseRepeatedSegments } from '../dedupe.ts'
 import { ApiError } from '../types.ts'
 
 /**
@@ -70,6 +70,8 @@ export class WebSpeechTranscriber {
   /** ユーザーが止めていないのに onend が来たら再起動する（Chrome は数十秒で勝手に切れる） */
   private shouldRestart = false
   private lastError: string | null = null
+  /** 終了→再開の連打を抑えるための時刻 */
+  private lastRestartAt = 0
 
   private readonly events: WebSpeechEvents
 
@@ -133,16 +135,25 @@ export class WebSpeechTranscriber {
       // sessionFinal 側に入り interimText は空になっているはずなので、
       // 残っているということはブラウザが確定させずに切ったということ。
       // 捨てると最後のひと言が消えてしまう。
-      this.committedText += this.sessionFinal + this.interimText
+      // 直前に確定した内容をもう一度返してくる端末があるので、
+      // 単純な連結ではなく、重なりを取り除いてからつなぐ。
+      this.committedText = appendWithoutOverlap(this.committedText, this.sessionFinal + this.interimText)
       this.sessionFinal = ''
       this.interimText = ''
 
       if (this.shouldRestart && !this.stopped) {
-        try {
-          rec.start()
-        } catch {
-          // 再起動できなければ諦める（stop() 側で結果は返せる）
-        }
+        // 終了と再開を高速で繰り返すと、同じ音声を二重に拾いやすい。少し間を置く。
+        const sinceLast = performance.now() - this.lastRestartAt
+        const delay = sinceLast < 400 ? 400 - sinceLast : 0
+        this.lastRestartAt = performance.now() + delay
+        setTimeout(() => {
+          if (this.stopped || !this.shouldRestart) return
+          try {
+            rec.start()
+          } catch {
+            // 再起動できなければ諦める（stop() 側で結果は返せる）
+          }
+        }, delay)
       }
     }
 
