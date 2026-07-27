@@ -82,7 +82,8 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
    * 「キーを入れたのにまだ使えない」状態になるので、入れた provider に向け直す。
    */
   const setKey = (provider: ProviderId, value: string) => {
-    const trimmed = value.trim()
+    // API キーに空白や改行は含まれない。貼り付け時に紛れ込むことが多いので落とす。
+    const trimmed = value.replace(/\s+/g, '')
     const nextKeys = { ...settings.apiKeys, [provider]: trimmed }
     const patch: Partial<Settings> = { apiKeys: nextKeys }
 
@@ -98,6 +99,21 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
       patch.polishEngine = provider as PolishEngine
     }
     onChange(patch)
+  }
+
+  /** スマホでは長押しの貼り付けが当てにくいので、ボタンから直接読み込めるようにする */
+  const pasteKey = async (provider: ProviderId) => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text.trim()) {
+        onNotify('err', 'クリップボードが空です')
+        return
+      }
+      setKey(provider, text)
+      onNotify('ok', `${KEY_INFO[provider].label} のキーを貼り付けました`, '「接続テスト」で確認できます')
+    } catch {
+      onNotify('err', '貼り付けできませんでした', '入力欄を長押しして手動で貼り付けてください。')
+    }
   }
 
   const setModel = (key: keyof Settings['models'], value: string) =>
@@ -143,15 +159,30 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
             <div className="field" key={provider}>
               <label htmlFor={`key-${provider}`}>{info.label}</label>
               <div className="row">
+                {/*
+                  type="password" は使わない。スマホだとパスワードマネージャの候補バーが
+                  被さって入力できなくなることがあるため、CSS で隠す方式にしている。
+                  autoCapitalize / autoCorrect を切らないと、スマホのキーボードが
+                  先頭を大文字にしたり綴りを直したりしてキーが壊れる。
+                */}
                 <input
                   id={`key-${provider}`}
-                  className="input mono"
-                  type={shown ? 'text' : 'password'}
+                  className={`input mono${shown ? '' : ' masked'}`}
+                  type="text"
+                  inputMode="text"
                   value={settings.apiKeys[provider]}
                   onChange={(e) => setKey(provider, e.target.value)}
+                  onFocus={(e) => {
+                    // キーボードが出ると入力欄が隠れることがあるので、見える位置へ寄せる
+                    setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 250)
+                  }}
                   placeholder="未設定"
                   autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
                   spellCheck={false}
+                  data-1p-ignore
+                  data-lpignore="true"
                 />
                 <button
                   type="button"
@@ -161,6 +192,23 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
                 >
                   {shown ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
+              </div>
+
+              <div className="row" style={{ marginTop: 6, flexWrap: 'wrap', gap: 6 }}>
+                <button className="btn sm" onClick={() => void pasteKey(provider)}>
+                  貼り付け
+                </button>
+                {settings.apiKeys[provider] && (
+                  <>
+                    <span style={{ fontSize: 12, color: 'var(--ok)' }}>
+                      {settings.apiKeys[provider].length} 文字 保存済み（末尾 …
+                      {settings.apiKeys[provider].slice(-4)}）
+                    </span>
+                    <button className="btn danger sm" onClick={() => setKey(provider, '')}>
+                      消す
+                    </button>
+                  </>
+                )}
               </div>
               <div className="row" style={{ marginTop: 8 }}>
                 <button
@@ -213,9 +261,23 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
             </button>
           </div>
           <div className="desc">
-            {!webSpeechOk && '※ このブラウザは内蔵音声認識に対応していないため、完全無料の構成は選べません。'}
-            {webSpeechOk &&
-              '「完全無料」は文字起こしと整形の両方をキー不要の方式に切り替えます。下の2つを個別に変えるより確実です。'}
+            「完全無料」は、APIキーをまったく使わない構成です。文字起こしをブラウザ内蔵の音声認識に、
+            整形を端末内のルール処理に、同時に切り替えます。下の2つを個別に変えるより確実です。
+            {!webSpeechOk && (
+              <>
+                <br />
+                <strong style={{ color: 'var(--warn)' }}>
+                  ※ このブラウザは内蔵の音声認識に対応していないため、完全無料の構成は選べません。Chrome か Microsoft
+                  Edge で開くと使えます（Firefox・iOS Safari は非対応）。
+                </strong>
+              </>
+            )}
+          </div>
+          <div className="desc" style={{ marginTop: 8 }}>
+            この端末の内蔵音声認識：{' '}
+            <strong style={{ color: webSpeechOk ? 'var(--ok)' : 'var(--warn)' }}>
+              {webSpeechOk ? '使えます' : '使えません'}
+            </strong>
           </div>
         </div>
 
@@ -410,9 +472,15 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
       {/* ---- 辞書 ---- */}
       <div className="section">
         <div className="section-title">ユーザー辞書</div>
-        <div className="desc" style={{ marginBottom: 12 }}>
-          人名・作品名・専門用語など、誤変換されやすい言葉を登録しておくと、AI が正しい表記に直します。
-          結果画面で語を選択して「辞書に追加」を押すと、ここに素早く登録できます。
+        <SwitchRow
+          title="よく使う製品名を自動で直す"
+          desc="「ジェミニ」→ Gemini、「クロード」→ Claude、「ギットハブ」→ GitHub のように、カタカナで書き起こされた製品名やサービス名をアルファベットに直します。キーなしの無料モードでも効きます。"
+          checked={settings.useBuiltinTerms}
+          onChange={(v) => onChange({ useBuiltinTerms: v })}
+        />
+        <div className="desc" style={{ margin: '12px 0' }}>
+          人名・作品名・専門用語など、上の一覧に無い言葉はここに登録してください。
+          結果画面で語を選択して「辞書に追加」を押すと素早く登録できます。
         </div>
         <DictionaryEditor settings={settings} onChange={onChange} />
       </div>

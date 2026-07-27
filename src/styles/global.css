@@ -670,6 +670,28 @@ p {
   font-size: 13px;
 }
 
+/* type="password" を使わずに伏せ字にする。
+   スマホのパスワードマネージャが入力欄に被さるのを避けるため。 */
+.input.masked {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+/* iOS で入力欄にフォーカスすると画面が拡大されるのを防ぐ（16px 未満だと拡大される） */
+@media (max-width: 719px) {
+  .input,
+  .select,
+  .textarea {
+    font-size: 16px;
+  }
+
+  /* 等幅も 16px を下回らせない。iOS は 16px 未満の入力欄にフォーカスすると拡大する */
+  .input.mono {
+    font-size: 16px;
+    letter-spacing: -0.02em;
+  }
+}
+
 .select {
   appearance: none;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-faint) 50%),

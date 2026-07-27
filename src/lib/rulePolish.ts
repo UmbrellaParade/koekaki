@@ -1,4 +1,8 @@
-import type { Mode } from './types'
+// 拡張子を明示しているのは、このファイルを npm test から Node で直接読むため。
+// Node の ESM 解決は拡張子を省略できない（Vite はどちらでも通る）。
+import { collapseRepeatedSegments } from './dedupe.ts'
+import { applyTermReplacements } from './terms.ts'
+import type { DictionaryEntry, Mode } from './types'
 
 /**
  * API キーを使わない、ルールベースの簡易整形。
@@ -195,14 +199,25 @@ export function ruleModeSupported(modeId: string): boolean {
   return modeId === 'standard' || modeId === 'raw' || modeId === 'notes'
 }
 
-export function rulePolish(text: string, mode: Mode): string {
+export interface RulePolishOptions {
+  /** ユーザー辞書。「誤変換されやすい表記」を正しい表記に置き換える */
+  dictionary?: DictionaryEntry[]
+  /** 「ジェミニ→Gemini」のような組み込み辞書を使う */
+  useBuiltinTerms?: boolean
+}
+
+export function rulePolish(text: string, mode: Mode, options: RulePolishOptions = {}): string {
   if (!text.trim()) return ''
 
   let out = normalize(text)
+  // AI を使わない経路でも辞書だけは効かせる。
+  // 「ジェミニ」「クロード」がカタカナのまま残るのを防ぐのはここ。
+  out = applyTermReplacements(out, options.useBuiltinTerms ?? true, options.dictionary ?? [])
   out = removeFillers(out)
   out = collapseRepeats(out)
   out = applyCorrections(out)
   out = addPunctuation(out)
+  out = collapseRepeatedSegments(out)
   out = finalTidy(out)
 
   if (mode.id === 'notes') out = toBullets(out)

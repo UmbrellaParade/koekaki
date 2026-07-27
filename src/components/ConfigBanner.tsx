@@ -33,14 +33,15 @@ export function ConfigBanner({ missing, settings, onApply, onOpenSettings }: Con
           下のどれかを選べば、すぐ使えるようになります。
         </p>
         <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-          {webSpeechOk && (
-            <button
-              className="btn primary sm"
-              onClick={() => onApply({ transcribeEngine: 'webspeech', polishEngine: 'rules' })}
-            >
-              キーなしで無料で使う
-            </button>
-          )}
+          {/* 使えないときも必ず出す。黙って隠すと「無料の選択肢が無い」ように見えてしまう。 */}
+          <button
+            className="btn primary sm"
+            disabled={!webSpeechOk}
+            title={webSpeechOk ? undefined : 'このブラウザは内蔵の音声認識に対応していません'}
+            onClick={() => onApply({ transcribeEngine: 'webspeech', polishEngine: 'rules' })}
+          >
+            キーなしで無料で使う
+          </button>
           {hasOpenai && (
             <button className="btn sm" onClick={() => onApply({ transcribeEngine: 'openai', polishEngine: 'openai' })}>
               OpenAI のキーを使う
@@ -55,6 +56,13 @@ export function ConfigBanner({ missing, settings, onApply, onOpenSettings }: Con
             設定を開く
           </button>
         </div>
+        {!webSpeechOk && (
+          <p style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 10, lineHeight: 1.6 }}>
+            ※「キーなしで無料で使う」が押せないのは、<strong>このブラウザが内蔵の音声認識に対応していない</strong>ためです。
+            キーなしで使うには <strong>Chrome か Microsoft Edge</strong> でこのページを開いてください
+            （Firefox と iOS の Safari は非対応です）。
+          </p>
+        )}
       </div>
     </div>
   )

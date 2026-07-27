@@ -32,7 +32,11 @@ export class Recorder {
   /** 録音開始直後は無音判定しない猶予 */
   private readonly warmupMs = 700
 
-  constructor(private readonly events: RecorderEvents = {}) {}
+  private readonly events: RecorderEvents
+
+  constructor(events: RecorderEvents = {}) {
+    this.events = events
+  }
 
   get isRecording(): boolean {
     return this.recorder?.state === 'recording'

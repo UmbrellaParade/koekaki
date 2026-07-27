@@ -54,6 +54,8 @@ export interface Settings {
   /** ユーザー定義モード */
   customModes: Mode[]
   dictionary: DictionaryEntry[]
+  /** 「ジェミニ→Gemini」のような、よくある製品名の組み込み辞書を使う */
+  useBuiltinTerms: boolean
   /** 自分の文体サンプル。整形時に文体の参考として渡す */
   styleSample: string
   /** 録音を止めたら自動で整形まで走らせる */
@@ -95,13 +97,17 @@ export interface TranscribeResult {
 }
 
 export class ApiError extends Error {
-  constructor(
-    message: string,
-    readonly provider: ProviderId | 'webspeech',
-    readonly status?: number,
-    readonly hint?: string,
-  ) {
+  readonly provider: ProviderId | 'webspeech'
+  readonly status?: number
+  readonly hint?: string
+
+  // パラメータプロパティ構文は使わない。テストを Node の型ストリップで
+  // 直接動かしているが、あの構文は対応していないため。
+  constructor(message: string, provider: ProviderId | 'webspeech', status?: number, hint?: string) {
     super(message)
     this.name = 'ApiError'
+    this.provider = provider
+    this.status = status
+    this.hint = hint
   }
 }

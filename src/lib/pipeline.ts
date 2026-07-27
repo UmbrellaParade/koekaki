@@ -56,7 +56,13 @@ export async function processRecording(input: ProcessInput): Promise<ProcessOutp
     input.audio
   ) {
     input.onStage?.('transcribing')
-    const system = buildCombinedSystemPrompt(mode, dict, settings.styleSample, settings.spokenLang)
+    const system = buildCombinedSystemPrompt(
+      mode,
+      dict,
+      settings.styleSample,
+      settings.spokenLang,
+      settings.useBuiltinTerms,
+    )
     const { raw, polished, usage } = await geminiCombined(
       settings.apiKeys.gemini,
       settings.models.geminiTranscribe,
@@ -103,13 +109,13 @@ export async function processRecording(input: ProcessInput): Promise<ProcessOutp
 
   // ---- 2. 整形 ----
   input.onStage?.('polishing')
-  const system = buildPolishSystemPrompt(mode, dict, settings.styleSample)
+  const system = buildPolishSystemPrompt(mode, dict, settings.styleSample, settings.useBuiltinTerms)
   let polished = ''
   let polishLabel = ''
 
   if (settings.polishEngine === 'rules') {
     // キーも通信も使わない経路。ここだけは必ずローカルで完結する。
-    polished = rulePolish(raw, mode)
+    polished = rulePolish(raw, mode, { dictionary: dict, useBuiltinTerms: settings.useBuiltinTerms })
     polishLabel = ruleModeSupported(mode.id) ? ENGINE_LABEL.rules : `${ENGINE_LABEL.rules}（モード未対応）`
   } else if (settings.polishEngine === 'gemini') {
     const res = await geminiPolish(settings.apiKeys.gemini, settings.models.geminiPolish, system, raw)

@@ -1,4 +1,5 @@
-import { ApiError } from '../types'
+import { collapseRepeatedSegments } from '../dedupe.ts'
+import { ApiError } from '../types.ts'
 
 /**
  * ブラウザ内蔵の音声認識（Web Speech API）。
@@ -56,14 +57,25 @@ export interface WebSpeechEvents {
 
 export class WebSpeechTranscriber {
   private recognition: SpeechRecognitionLike | null = null
-  private finalText = ''
+  /**
+   * 認識が一度終了して再開するまでに確定した分。
+   * onresult の results は「そのセッションの全結果」なので、
+   * セッションをまたぐ分だけをここに積む。
+   */
+  private committedText = ''
+  /** 現在のセッションで確定している分（毎回 results から組み立て直す） */
+  private sessionFinal = ''
   private interimText = ''
   private stopped = false
   /** ユーザーが止めていないのに onend が来たら再起動する（Chrome は数十秒で勝手に切れる） */
   private shouldRestart = false
   private lastError: string | null = null
 
-  constructor(private readonly events: WebSpeechEvents = {}) {}
+  private readonly events: WebSpeechEvents
+
+  constructor(events: WebSpeechEvents = {}) {
+    this.events = events
+  }
 
   start(lang: string): void {
     const Ctor = getCtor()
@@ -76,7 +88,8 @@ export class WebSpeechTranscriber {
       )
     }
 
-    this.finalText = ''
+    this.committedText = ''
+    this.sessionFinal = ''
     this.interimText = ''
     this.stopped = false
     this.shouldRestart = true
@@ -89,15 +102,21 @@ export class WebSpeechTranscriber {
     rec.maxAlternatives = 1
 
     rec.onresult = (e) => {
+      // results は「このセッションの全結果」を持つ累積リスト。
+      // resultIndex から先だけを足していくと、Android Chrome のように
+      // resultIndex が 0 に戻る環境で同じ文を何度も足してしまう（羅列バグ）。
+      // 毎回ゼロから組み立て直せば、何度呼ばれても結果は同じになる。
+      let final = ''
       let interim = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const result = e.results[i]
         const text = result[0]?.transcript ?? ''
-        if (result.isFinal) this.finalText += text
+        if (result.isFinal) final += text
         else interim += text
       }
+      this.sessionFinal = final
       this.interimText = interim
-      this.events.onPartial?.(this.finalText + this.interimText)
+      this.events.onPartial?.(this.committedText + this.sessionFinal + this.interimText)
     }
 
     rec.onerror = (e) => {
@@ -107,6 +126,17 @@ export class WebSpeechTranscriber {
     }
 
     rec.onend = () => {
+      // セッションが切れたら、そこまでの分を確定済みへ移す。
+      // 再開後の results は空から始まるので、ここで移さないと消えてしまう。
+      //
+      // 未確定分もここで拾う。確定に変わっていれば直前の onresult で
+      // sessionFinal 側に入り interimText は空になっているはずなので、
+      // 残っているということはブラウザが確定させずに切ったということ。
+      // 捨てると最後のひと言が消えてしまう。
+      this.committedText += this.sessionFinal + this.interimText
+      this.sessionFinal = ''
+      this.interimText = ''
+
       if (this.shouldRestart && !this.stopped) {
         try {
           rec.start()
@@ -135,7 +165,9 @@ export class WebSpeechTranscriber {
     }
     this.recognition = null
 
-    const text = (this.finalText + this.interimText).trim()
+    const text = collapseRepeatedSegments(
+      (this.committedText + this.sessionFinal + this.interimText).trim(),
+    )
     if (!text && this.lastError) {
       throw new ApiError(
         `ブラウザの音声認識でエラーが発生しました (${this.lastError})`,

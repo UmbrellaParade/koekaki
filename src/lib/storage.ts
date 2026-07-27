@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: Settings = {
   activeModeId: 'standard',
   customModes: [],
   dictionary: [],
+  useBuiltinTerms: true,
   styleSample: '',
   autoProcess: true,
   appendMode: false,

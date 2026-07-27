@@ -2,7 +2,13 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+    <!-- interactive-widget=resizes-content: スマホのキーボードが出たときに
+         レイアウトを縮めて、入力欄がキーボードの下に隠れないようにする。
+         拡大禁止は入れない（アクセシビリティのため。iOS の入力時ズームは CSS 側で防いでいる）。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="theme-color" content="#0f1115" />
     <meta name="description" content="こえかき — 話すだけで、整った文章に。言い淀みや言い直しをAIが取り除き、そのまま使える文章にして出力する音声入力ツール。" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

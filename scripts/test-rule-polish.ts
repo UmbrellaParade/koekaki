@@ -14,10 +14,13 @@ interface Case {
   label: string
   input: string
   mode?: Mode
+  dictionary?: Array<{ term: string; wrong?: string }>
   /** 出力に含まれていてほしい文字列 */
   must?: string[]
   /** 出力に残っていてはいけない文字列 */
   mustNot?: string[]
+  /** 独自の検査。問題があれば理由を返す */
+  check?: (out: string) => string | null
 }
 
 const cases: Case[] = [
@@ -80,14 +83,59 @@ const cases: Case[] = [
     input: '   ',
     must: [],
   },
+  {
+    label: '組み込み辞書：カタカナの製品名をアルファベットに直す',
+    input: 'えーと、ジェミニとクロードとギットハブを使っています',
+    must: ['Gemini', 'Claude', 'GitHub'],
+    mustNot: ['ジェミニ', 'クロード', 'ギットハブ'],
+  },
+  {
+    label: '組み込み辞書：一般語を巻き込まない',
+    input: 'カーソルをズームして、ブレンダーで混ぜます',
+    must: ['カーソル', 'ズーム', 'ブレンダー'],
+  },
+  {
+    label: 'スマホで起きた「同じ文の羅列」を1つにまとめる',
+    input: '今精度を確かめています今精度を確かめています今精度を確かめています',
+    must: ['精度を確かめています'],
+    check: (out) => {
+      const count = out.split('精度を確かめています').length - 1
+      return count === 1 ? null : `${count} 回残っている`
+    },
+  },
+  {
+    label: '句点区切りで羅列された場合もまとめる',
+    input: '精度を確かめています。精度を確かめています。精度を確かめています。',
+    check: (out) => {
+      const count = out.split('精度を確かめています').length - 1
+      return count === 1 ? null : `${count} 回残っている`
+    },
+  },
+  {
+    label: '似ているだけの別の文は残す',
+    input: '資料を送ります。資料を確認します。',
+    must: ['資料を送ります', '資料を確認します'],
+  },
+  {
+    label: 'ユーザー辞書が効く',
+    input: 'アンブレラパレードの新曲です',
+    dictionary: [{ term: 'Umbrella Parade', wrong: 'アンブレラパレード' }],
+    must: ['Umbrella Parade'],
+    mustNot: ['アンブレラパレード'],
+  },
 ]
 
 let failed = 0
 for (const c of cases) {
-  const out = rulePolish(c.input, c.mode ?? standard)
+  const out = rulePolish(c.input, c.mode ?? standard, {
+    dictionary: c.dictionary ?? [],
+    useBuiltinTerms: true,
+  })
   const problems: string[] = []
   for (const m of c.must ?? []) if (!out.includes(m)) problems.push(`欠落: "${m}"`)
   for (const m of c.mustNot ?? []) if (out.includes(m)) problems.push(`残存: "${m}"`)
+  const custom = c.check?.(out)
+  if (custom) problems.push(custom)
 
   if (problems.length === 0) {
     console.log(`  OK   ${c.label}`)

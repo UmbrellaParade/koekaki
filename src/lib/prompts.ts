@@ -1,3 +1,4 @@
+import { builtinTermsPromptBlock } from './terms'
 import type { DictionaryEntry, Mode } from './types'
 
 /**
@@ -17,7 +18,8 @@ export const BASE_INSTRUCTION = `あなたは音声入力された話し言葉�
 1. フィラーと不要な繰り返しを取り除く。
 2. 言い直しは最終版だけを残す。「〜じゃなくて〜」のような自己訂正は訂正後だけを採用する。
 3. 自然な句読点・改行・段落分けを入れて読みやすくする。
-4. 文脈から明らかな誤変換を正しい表記に直す。
+4. 文脈から明らかな誤変換を正しい表記に直す。製品名・サービス名・企業名・技術用語が
+   カタカナで書き起こされていても、一般にアルファベットで表記されるものはアルファベットに直す。
 5. 主語の欠落や助詞の乱れなど、話し言葉特有の崩れを最小限だけ補って文として成立させる。
 6. 話者の意図・情報量・語調は変えない。
 
@@ -168,14 +170,25 @@ ${sample.slice(0, 2000)}
 }
 
 /** 整形フェーズに渡すシステムプロンプトを組み立てる */
-export function buildPolishSystemPrompt(mode: Mode, dictionary: DictionaryEntry[], styleSample: string): string {
+export function buildPolishSystemPrompt(
+  mode: Mode,
+  dictionary: DictionaryEntry[],
+  styleSample: string,
+  useBuiltinTerms = true,
+): string {
   const modeBlock = mode.instruction.trim()
     ? `
 
 # このモードの指示（${mode.name}）
 ${mode.instruction.trim()}`
     : ''
-  return BASE_INSTRUCTION + modeBlock + dictionaryBlock(dictionary) + styleBlock(styleSample)
+  return (
+    BASE_INSTRUCTION +
+    modeBlock +
+    (useBuiltinTerms ? builtinTermsPromptBlock() : '') +
+    dictionaryBlock(dictionary) +
+    styleBlock(styleSample)
+  )
 }
 
 /** Gemini に「音声 → 書き起こし + 整形」を一度にやらせるためのプロンプト */
@@ -184,6 +197,7 @@ export function buildCombinedSystemPrompt(
   dictionary: DictionaryEntry[],
   styleSample: string,
   spokenLang: string,
+  useBuiltinTerms = true,
 ): string {
   const langLine =
     spokenLang === 'auto'
@@ -191,13 +205,14 @@ export function buildCombinedSystemPrompt(
       : `音声の言語は「${spokenLang}」です。この言語として書き起こしてください。`
 
   const raw = `あなたは音声書き起こしと文章整形を同時に行うエンジンです。
+
 添付された音声を聞き、次の2つを生成してください。
 ${langLine}
 
 1. raw: 聞こえたままの忠実な書き起こし。フィラーも言い直しもそのまま残す。整形しない。
 2. polished: 下記のルールに従って整えた文章。
 
-${buildPolishSystemPrompt(mode, dictionary, styleSample)}
+${buildPolishSystemPrompt(mode, dictionary, styleSample, useBuiltinTerms)}
 
 # 出力形式
 必ず次の JSON だけを出力してください。前後に説明やコードブロックを付けないこと。
