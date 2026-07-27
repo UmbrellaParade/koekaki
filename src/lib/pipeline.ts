@@ -8,7 +8,7 @@ import {
 import { anthropicPolish } from './providers/anthropic'
 import { geminiCombined, geminiPolish, geminiTranscribe } from './providers/gemini'
 import { openaiPolish, openaiTranscribe } from './providers/openai'
-import type { Mode, Settings } from './types'
+import type { Mode, ProviderId, Settings } from './types'
 import { ApiError } from './types'
 
 export interface ProcessInput {
@@ -130,13 +130,19 @@ export async function processRecording(input: ProcessInput): Promise<ProcessOutp
   }
 }
 
-/** 履歴から、別モードで整形だけやり直す */
-export async function repolish(rawText: string, settings: Settings, mode: Mode): Promise<ProcessOutput> {
-  return processRecording({
-    audio: null,
-    webSpeechText: rawText,
-    durationMs: 0,
-    settings: { ...settings, transcribeEngine: 'webspeech' },
-    mode,
-  })
+/**
+ * API キーが実際に通るかを、最小のリクエストで確かめる。
+ * 録音してから初めて失敗に気づく、という体験を避けるためのもの。
+ */
+export async function testProviderKey(provider: ProviderId, settings: Settings): Promise<void> {
+  const system = '次の入力をそのまま繰り返してください。他には何も言わないこと。'
+  const probe = 'ok'
+
+  if (provider === 'gemini') {
+    await geminiPolish(settings.apiKeys.gemini, settings.models.geminiPolish, system, probe)
+  } else if (provider === 'openai') {
+    await openaiPolish(settings.apiKeys.openai, settings.models.openaiPolish, system, probe)
+  } else {
+    await anthropicPolish(settings.apiKeys.anthropic, settings.models.anthropicPolish, system, probe)
+  }
 }

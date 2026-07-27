@@ -487,6 +487,24 @@ p {
   color: var(--text-dim);
 }
 
+.pending-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  margin-bottom: 14px;
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 13px;
+}
+
+.pending-bar > span {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
 /* ===== シート（設定・履歴） ===== */
 .sheet-backdrop {
   position: fixed;

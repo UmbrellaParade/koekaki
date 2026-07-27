@@ -8,6 +8,7 @@ import { RecordStage, type Phase } from './components/RecordStage'
 import { ResultPanel } from './components/ResultPanel'
 import { SettingsSheet } from './components/SettingsSheet'
 import { ToastArea, useToasts } from './components/Toast'
+import { formatDuration } from './lib/audio'
 import { addHistory, clearHistory, deleteHistory, listHistory } from './lib/db'
 import { processRecording } from './lib/pipeline'
 import { allModes, findMode } from './lib/prompts'
@@ -32,6 +33,10 @@ export default function App() {
   const [elapsedMs, setElapsedMs] = useState(0)
   const [liveText, setLiveText] = useState('')
   const [result, setResult] = useState<Result | null>(null)
+  /** 「自動で変換」オフのとき、変換ボタンが押されるまで録音を保持しておく */
+  const [pending, setPending] = useState<{ audio: Blob | null; webSpeechText: string | null; durationMs: number } | null>(
+    null,
+  )
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [sheet, setSheet] = useState<'none' | 'settings' | 'history' | 'onboarding'>(
     () => (loadSettings().onboarded ? 'none' : 'onboarding'),
@@ -187,6 +192,7 @@ export default function App() {
 
     setLiveText('')
     setElapsedMs(0)
+    setPending(null)
 
     const recorder = new Recorder({
       onLevel: setLevel,
@@ -268,16 +274,9 @@ export default function App() {
     }
 
     if (!settings.autoProcess) {
+      // 録音を手元に置いたまま待つ。モードを選び直してから変換できる。
       setPhase('idle')
-      // 自動変換オフのときは、書き起こしを結果欄に入れて手動変換を待つ
-      setResult({
-        raw: webSpeechText ?? '',
-        polished: webSpeechText ?? '',
-        modeName: activeMode.name,
-        engine: '未変換',
-        costUsd: 0,
-      })
-      if (audio) void runProcess(audio, webSpeechText, durationMs, activeMode)
+      setPending({ audio, webSpeechText, durationMs })
       return
     }
 
@@ -293,6 +292,7 @@ export default function App() {
     speechRef.current = null
     setLevel(0)
     setLiveText('')
+    setPending(null)
     setPhase('idle')
   }, [])
 
@@ -332,6 +332,13 @@ export default function App() {
   }, [phase, sheet, editingMode, startRecording, stopRecording])
 
   // ---- 各種ハンドラ ----
+  const handleConvertPending = useCallback(() => {
+    if (!pending) return
+    const { audio, webSpeechText, durationMs } = pending
+    setPending(null)
+    void runProcess(audio, webSpeechText, durationMs, activeMode)
+  }, [pending, activeMode, runProcess])
+
   const handleRepolish = useCallback(() => {
     if (!result?.raw) return
     void runProcess(null, result.raw, 0, activeMode)
@@ -436,6 +443,20 @@ export default function App() {
         onCancel={cancelRecording}
         showKeyboardHint={window.matchMedia('(hover: hover)').matches}
       />
+
+      {pending && phase === 'idle' && (
+        <div className="pending-bar">
+          <span>
+            録音 {formatDuration(pending.durationMs)} を保留中 — モードを選んでから変換できます
+          </span>
+          <button className="btn ghost sm" onClick={() => setPending(null)}>
+            捨てる
+          </button>
+          <button className="btn primary sm" onClick={handleConvertPending}>
+            変換する
+          </button>
+        </div>
+      )}
 
       {result && (
         <ResultPanel

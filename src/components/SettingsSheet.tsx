@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { AUDIO_PRICES, TEXT_PRICES } from '../lib/cost'
+import { testProviderKey } from '../lib/pipeline'
 import { isWebSpeechSupported } from '../lib/providers/webspeech'
 import { exportSettings, importSettings } from '../lib/storage'
 import type { PolishEngine, ProviderId, Settings, TranscribeEngine } from '../lib/types'
-import { AlertIcon, EyeIcon, EyeOffIcon, PlusIcon, TrashIcon } from './Icons'
+import { ApiError } from '../lib/types'
+import { AlertIcon, EyeIcon, EyeOffIcon, LoaderIcon, PlusIcon, TrashIcon } from './Icons'
 import { Segmented, Sheet, SwitchRow } from './Sheet'
 
 interface SettingsSheetProps {
@@ -50,7 +52,21 @@ const LANGS: Array<{ value: string; label: string }> = [
 
 export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onNotify }: SettingsSheetProps) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
+  const [testing, setTesting] = useState<ProviderId | null>(null)
   const webSpeechOk = isWebSpeechSupported()
+
+  const testKey = async (provider: ProviderId) => {
+    setTesting(provider)
+    try {
+      await testProviderKey(provider, settings)
+      onNotify('ok', `${KEY_INFO[provider].label} につながりました`)
+    } catch (err) {
+      if (err instanceof ApiError) onNotify('err', err.message, err.hint)
+      else onNotify('err', '接続できませんでした')
+    } finally {
+      setTesting(null)
+    }
+  }
 
   const setKey = (provider: ProviderId, value: string) =>
     onChange({ apiKeys: { ...settings.apiKeys, [provider]: value.trim() } })
@@ -117,12 +133,20 @@ export function SettingsSheet({ settings, onChange, onClose, onClearHistory, onN
                   {shown ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
               </div>
-              <div className="desc">
-                {info.note}{' '}
-                <a href={info.url} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent)' }}>
+              <div className="row" style={{ marginTop: 8 }}>
+                <button
+                  className="btn sm"
+                  onClick={() => void testKey(provider)}
+                  disabled={!settings.apiKeys[provider] || testing !== null}
+                >
+                  {testing === provider && <LoaderIcon size={14} className="spin" />}
+                  {testing === provider ? '確認中…' : '接続テスト'}
+                </button>
+                <a href={info.url} target="_blank" rel="noreferrer noopener" className="btn ghost sm">
                   キーを取得
                 </a>
               </div>
+              <div className="desc">{info.note}</div>
             </div>
           )
         })}

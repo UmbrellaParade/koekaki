@@ -69,7 +69,8 @@ async function call(
   const data = (await res.json().catch(() => ({}))) as GeminiResponse
 
   if (!res.ok) {
-    throw new ApiError(data.error?.message ?? `Gemini エラー (HTTP ${res.status})`, 'gemini', res.status, geminiHint(res.status))
+    const message = data.error?.message ?? `Gemini エラー (HTTP ${res.status})`
+    throw new ApiError(message, 'gemini', res.status, geminiHint(res.status, message))
   }
 
   if (data.promptFeedback?.blockReason) {
@@ -92,7 +93,9 @@ async function call(
   }
 }
 
-function geminiHint(status: number): string | undefined {
+function geminiHint(status: number, message = ''): string | undefined {
+  // 無効なキーでも 400 が返ってくるので、本文を見て案内を分ける
+  if (/api key/i.test(message)) return 'API キーが正しくありません。設定画面で貼り直してください。'
   if (status === 400) return 'モデル名が正しいか、設定画面で確認してください。'
   if (status === 401 || status === 403)
     return 'API キーが無効か、Generative Language API が有効になっていません。Google AI Studio でキーを再発行してください。'
