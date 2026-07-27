@@ -7,3 +7,4 @@ dist-ssr/
 .vite/
 .env
 .env.local
+tsconfig.tsbuildinfo
