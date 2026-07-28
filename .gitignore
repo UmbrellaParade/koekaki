@@ -10,3 +10,8 @@ dist-desktop/
 .env
 .env.local
 tsconfig.tsbuildinfo
+android/.gradle/
+android/.idea/
+android/**/build/
+android/local.properties
+*.iml

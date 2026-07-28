@@ -78,6 +78,16 @@ starting / recording / transcribing / polishing の4状態だけを受信しま�
 手打ち時はユーザーが普段使う標準キーボードへ素早く戻します。
 詳細は `HANDOFF.md` 第9章と `docs/mobile-input.md` を読んでください。
 
+`android/` にAndroid音声専用IMEの技術実証を追加済みです。端末の音声認識を短い区切りで
+自動再開し、停止時に同じ `InputConnection` へ1回だけ直接挿入します。Codex / Claude / LINEは
+アプリ固有処理ではなく、通常の入力欄として共通対応します。パスワード欄と入力先変更時は挿入せず、
+`いつものキーボード`、常時見える設定、初回セットアップ、自動復帰設定があります。
+
+このPCにはAndroid Studio / JDK / SDK / Gradleが無いため、Android側は
+`.github/workflows/android.yml` で単体テスト・Lint・debug APK生成を行います。初版は端末の
+音声認識結果の直接挿入までで、既存Web版のAI整形・辞書・モードは未接続です。
+APKの実機インストールとCodex / Claude / LINE入力は未確認なので、完了扱いにしないでください。
+
 現在のPWAでは、スマホのブラウザ内蔵認識を `continuous = false` の短い区切りで動かし、
 短い無音で `onend` になっても停止操作までは自動再開します。区切り前後の重複除去、
 回復不能エラー、中断理由の表示、有限リトライ、取消時の再開防止を回帰テストで守っています。

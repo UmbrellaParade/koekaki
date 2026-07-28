@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">こえかき</string>
+    <string name="ime_name">こえかき音声入力</string>
+    <string name="subtype_japanese">日本語</string>
+    <string name="setup_title">こえかき 音声キーボード</string>
+
+    <string name="action_speak">話す</string>
+    <string name="action_stop">停止して入力</string>
+    <string name="action_cancel">取り消す</string>
+    <string name="action_previous_keyboard">⌨ いつものキーボード</string>
+    <string name="action_settings">設定</string>
+
+    <string name="status_ready">「話す」を押すと、現在の入力欄へ文章を入れます</string>
+    <string name="status_preparing">音声入力を準備しています…</string>
+    <string name="status_listening">録音中です。短い無音でも「停止」まで続けます</string>
+    <string name="status_processing">音声を文字にしています…</string>
+    <string name="status_cancelled">音声入力を取り消しました</string>
+    <string name="status_inserted">現在のカーソル位置へ入力しました</string>
+    <string name="status_inserted_after_error">音声認識が中断したため、ここまでの内容を入力しました</string>
+    <string name="status_sensitive">パスワードなどの保護された欄では音声入力を使えません</string>
+    <string name="status_unsupported_field">この入力欄では直接入力を利用できません</string>
+    <string name="status_permission_required">マイクの許可が必要です。「設定」から許可してください</string>
+    <string name="status_recognizer_unavailable">この端末では音声認識サービスを利用できません</string>
+    <string name="status_target_changed">入力先が変わったため、文章を挿入しませんでした</string>
+    <string name="status_no_speech">音声を聞き取れませんでした。もう一度お試しください</string>
+    <string name="status_network_error">音声認識サービスと通信できませんでした</string>
+    <string name="status_audio_error">マイクを利用できませんでした</string>
+    <string name="status_recognizer_busy">音声認識が混み合っています。少し待ってお試しください</string>
+    <string name="status_recognition_error">音声認識を完了できませんでした</string>
+
+    <string name="setup_intro">いつもの入力欄へ、話した言葉をそのまま入れられます。最初に3つの準備を完了してください。</string>
+    <string name="setup_status_title">準備状況</string>
+    <string name="setup_steps_title">最初の設定</string>
+    <string name="setup_grant_microphone_button">1. マイクを許可する</string>
+    <string name="setup_microphone_permission_granted_button">マイクは許可済みです</string>
+    <string name="setup_open_app_settings_button">アプリ設定でマイクを許可する</string>
+    <string name="setup_open_ime_settings_button">2. こえかきを有効にする</string>
+    <string name="setup_choose_input_method_button">3. こえかきを選択する</string>
+    <string name="setup_auto_return_keyboard">音声入力後、以前のキーボードへ自動で戻る</string>
+    <string name="setup_auto_return_keyboard_description">オンにすると、文章を挿入した直後に普段のキーボードへ戻ります。</string>
+    <string name="setup_test_title">Codex・Claude・LINEで試す</string>
+    <string name="setup_test_description">下の欄をタップし、こえかきで話して入力を確認できます。同じ操作で各アプリの入力欄にも反映できます。</string>
+    <string name="setup_test_hint">ここをタップして、こえかきで話してみてください</string>
+    <string name="setup_privacy_note">入力した文章や音声を、この設定画面が読み取ったり記録したりすることはありません。音声認識には端末の音声認識サービスを使います。</string>
+    <string name="setup_status_format">●  %1$s：%2$s</string>
+    <string name="setup_status_microphone">マイク</string>
+    <string name="setup_status_ime_enabled">こえかきキーボード</string>
+    <string name="setup_status_ime_selected">現在の入力方式</string>
+    <string name="setup_status_permission_granted">利用できます</string>
+    <string name="setup_status_permission_needed">許可が必要です</string>
+    <string name="setup_status_enabled">有効です</string>
+    <string name="setup_status_not_enabled">まだ有効になっていません</string>
+    <string name="setup_status_selected">こえかきを選択中です</string>
+    <string name="setup_status_not_selected">こえかきが選択されていません</string>
+    <string name="setup_microphone_permission_denied">音声入力にはマイクの許可が必要です。</string>
+    <string name="setup_input_method_picker_unavailable">入力方式の選択画面を開けませんでした。</string>
+</resources>

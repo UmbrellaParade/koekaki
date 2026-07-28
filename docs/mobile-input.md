@@ -72,3 +72,25 @@ Typelessで「設定画面があるかも分からない」と感じた問題を
 
 iOSは同等機能の実装対象にせず、現在のPWAで「録音 → 整形 → コピー／共有」を
 改善する別トラックにします。Appleがマイク制約を変更した場合にのみ再評価します。
+
+## 現在のAndroid技術実証（2026-07-28）
+
+`android/` にJava製の音声専用IMEを追加しました。CodexやClaudeだけを特別扱いせず、
+通常のAndroid入力欄へ共通の `InputConnection.commitText()` で挿入するため、LINEを含む
+他のアプリでも同じ経路を使います。
+
+実装済みの範囲:
+
+- `話す` / `停止して入力` / `取り消す` の明示的な操作
+- 端末の `SpeechRecognizer` が短い無音で終了しても区切って自動再開（無音60秒、全体10分で安全停止）
+- 区切り境界の重複を除き、認識途中文を表示せず、最終文を1回だけ挿入
+- 開始時の `InputConnection`、入力セッション、package、field IDを停止時に再確認
+- 入力先の変更、接続切れ、パスワード欄、`TYPE_NULL` では挿入しない
+- `⌨ いつものキーボード`、設定ボタン、挿入後の自動復帰設定
+- ランチャー画面からマイク許可、IME有効化、IME選択、テスト入力へ進める導線
+- GitHub Actionsで単体テスト、Lint、debug APK生成、14日間のArtifact保存
+
+この初版は端末の音声認識結果を直接挿入する段階です。AI整形、辞書、モード、Web版との
+設定共有は未接続です。このPCにはAndroid Studio / JDK / SDK / Gradleが無いため、ビルドは
+GitHub Actionsで行います。APKのインストール、Codex / Claude / LINEへの挿入、Pixel / Samsung、
+Gboard / Samsung Keyboardでの挙動は、依頼主のAndroid実機で確認するまで未確認です。

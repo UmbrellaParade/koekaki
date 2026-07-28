@@ -317,6 +317,7 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 - デスクトップ版ではAPIキーを `safeStorage` で暗号化し、Web版の保存領域と分離
 - スマホ幅（375px）での表示崩れなし、ダーク/ライト両対応
 - **実機（Android）で羅列バグの解消と、APIキー入力の復旧を依頼主が確認済み**
+- Android音声専用IMEのソース、初回設定導線、安全な入力先照合、14件のJVMテスト、APK生成CI
 
 ### 未確認
 
@@ -324,12 +325,13 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 - 実際の右Altで取得した入力先、主要アプリへの貼り付け、クリップボード復元の実機動作
 - AI 整形（Gemini / OpenAI / Claude）の実出力品質
 - 短い無音のあとも区切り継続できることと、重複しないことのAndroid実機確認
+- Android IMEのAPKインストール、端末マイク、Codex / Claude / LINEへの直接挿入、普段のIMEへの復帰
 - iOS Safari での動作全般
 
 ### 依頼主から出ている要望
 
 1. **デスクトップ常駐版（最優先・5段階のコードと視覚QA完了、実機確認待ち）** — 第8章
-2. **Android音声専用IME** — 第9章と `docs/mobile-input.md`
+2. **Android音声専用IME（技術実証とAPK生成CIまで実装、実機確認待ち）** — 第9章と `docs/mobile-input.md`
 3. Web 検索モード（「調べる」）— 未着手。OpenAI / Gemini とも検索ツールがあり実装は可能
 4. 英語 UI — 未着手
 
@@ -469,8 +471,25 @@ electron/
 - iOS Keyboard Extensionは公開仕様上マイクを使えないため、同等機能を約束しない
 - PWAは自アプリ内で標準キーボードを使い、他アプリへはコピー／共有で渡す
 
-最初は「固定文字を他アプリへ挿入」と「直前のキーボードへ復帰」だけの
-小さなAndroid技術実証から始めます。端末・IMEごとの差は必ず実機で確認します。
+### 現在の進捗
+
+- [x] `android/` にJava 17 / minSdk 28の `InputMethodService` を追加
+- [x] 端末の `SpeechRecognizer` を短い区切りで再開する音声入力（無音60秒、全体10分で安全停止）
+- [x] 区切り境界の重複を除き、最終文だけを `InputConnection.commitText()` で1回挿入
+- [x] 開始時の `InputConnection` と入力セッションを保持し、変更時・接続切れ時は破棄
+- [x] password variation / `TYPE_NULL` の無効化、取消・IME非表示・設定移動時の破棄
+- [x] `いつものキーボード`、設定、挿入後の自動復帰、初回チェックリスト
+- [x] GitHub ActionsでJava 17 / Gradle 8.9 / API 35を用意し、テスト・Lint・debug APKをArtifact化
+- [ ] 依頼主のAndroid実機でAPKをインストールし、Codex / Claude / LINE、Pixel / Samsung、
+      Gboard / Samsung Keyboardを確認
+- [ ] 既存Web版のAI整形、辞書、モード、APIキー管理をネイティブIMEへ接続
+
+初版は端末の音声認識結果を直接挿入する技術実証です。Codex / Claudeを名前で許可する実装ではなく、
+LINEを含む通常の入力欄へ共通経路で挿入します。このPCにはAndroid Studio、JDK、SDK、Gradle、ADBが
+無いため、ローカルAPKビルドはできません。`.github/workflows/android.yml` のCIを使います。
+debug APKの取得と初回設定は `android/README.md` を参照してください。
+
+端末・IMEごとの差と実マイク動作は必ず実機で確認します。確認前に「スマホ版で動作済み」とは言いません。
 
 ---
 

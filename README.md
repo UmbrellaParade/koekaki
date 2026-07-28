@@ -186,6 +186,17 @@ Ctrl / Shift / Alt / Win が押されていない場合だけ Ctrl+V を送り�
 デスクトップ版のAPIキーはWeb版の `localStorage` と共有せず、Windowsの暗号化保存を使います。
 ソース、環境変数、IPCの状態通知には保存しません。
 
+### Android音声キーボード（技術実証）
+
+`android/` には、Codex・Claude・LINEなどの入力欄へ音声認識結果を直接入れる
+Android IMEがあります。独自の文字配列は持たず、手打ちや顔文字は
+`⌨ いつものキーボード` から普段のIMEへ戻って入力します。
+
+このPCにはAndroid開発環境が無いため、[Android IMEワークフロー](./.github/workflows/android.yml) が
+単体テスト、Lint、debug APK生成を行います。詳しい取得方法と未実装範囲は
+[`android/README.md`](./android/README.md) を参照してください。実機でのCodex・Claude・LINE入力は
+未確認で、初版にはAI文章整形とWeb版の設定共有はまだ接続していません。
+
 このPCのApplication ControlがElectron付属のZIP展開モジュールを拒否する場合は、
 次を一度実行します。公式配布ZIPのSHA-256を照合し、Windows標準機能で展開します。
 
@@ -237,7 +248,7 @@ src/
 ## ロードマップ
 
 - [ ] デスクトップ常駐版（Electron、5段階のコード・自動テスト・視覚QA済み）— 実マイクと実アプリでの最終確認が残る
-- [ ] Android音声専用IME — 手打ちは独自配列を作らず「いつものキーボード」へ即座に戻す
+- [ ] Android音声専用IME — 音声認識・直接挿入・IME復帰の技術実証とCIを実装済み。実機確認とAI整形が残る
 - [ ] バックエンドプロキシ（API キーを隠したサブスク版）
 - [ ] 英語 UI
 - [ ] 長時間録音の分割送信
