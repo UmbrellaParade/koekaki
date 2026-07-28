@@ -13,15 +13,24 @@
     <string name="action_settings">設定</string>
 
     <string name="status_ready">「話す」を押すと、現在の入力欄へ文章を入れます</string>
-    <string name="status_preparing">音声入力を準備しています…</string>
-    <string name="status_listening">録音中です。短い無音でも「停止」まで続けます</string>
+    <string name="status_ready_with_ai">AI整形オン。「話す」で開始（1回最大10分）</string>
+    <string name="status_ready_without_ai">そのまま入力。「話す」で開始（1回最大10分）</string>
+    <string name="status_ready_without_ai_key">APIキー未設定：AI整形なしで入力します</string>
+    <string name="status_preparing">聞き取りを準備しています。表示が変わってから話してください…</string>
+    <string name="status_listening">聞き取り中です。短い無音でも「停止」まで続けます</string>
+    <string name="status_segment_saved">一区切り保存しました。「聞き取り中」に戻ったら続けて話せます</string>
+    <string name="status_recognition_retrying">途中の言葉を保持して、聞き取りを再開しています…</string>
     <string name="status_processing">音声を文字にしています…</string>
-    <string name="status_ai_polishing">AIで文章を整えています…</string>
+    <string name="status_ai_polishing">AIで句読点・疑問文・文章構成を整えています…</string>
     <string name="status_cancelled">音声入力を取り消しました</string>
     <string name="status_inserted">現在のカーソル位置へ入力しました</string>
+    <string name="status_inserted_with_ai">AIで句読点と文章を整えて入力しました</string>
+    <string name="status_inserted_with_ai_after_recognition_error">音声認識は中断しましたが、AIでここまでを整えて入力しました</string>
     <string name="status_inserted_after_error">音声認識が中断したため、ここまでの内容を入力しました</string>
-    <string name="status_inserted_without_ai">AI整形に失敗したため、聞き取ったまま入力しました</string>
-    <string name="status_inserted_without_ai_key">APIキーが未設定のため、聞き取ったまま入力しました</string>
+    <string name="status_inserted_without_ai">AI整形に失敗：認識できた内容を入力しました</string>
+    <string name="status_inserted_without_ai_key">APIキー未設定：AI整形なしで入力しました</string>
+    <string name="status_inserted_after_error_without_ai">音声認識が中断し、AI整形も失敗：ここまでを入力しました</string>
+    <string name="status_inserted_after_error_without_ai_key">音声認識が中断し、APIキー未設定：ここまでを入力しました</string>
     <string name="status_sensitive">パスワードなどの保護された欄では音声入力を使えません</string>
     <string name="status_unsupported_field">この入力欄では直接入力を利用できません</string>
     <string name="status_permission_required">マイクの許可が必要です。「設定」から許可してください</string>
@@ -45,6 +54,7 @@
     <string name="setup_auto_return_keyboard_description">オンにすると、文章を挿入した直後に普段のキーボードへ戻ります。</string>
     <string name="setup_ai_title">AIで文章を整える</string>
     <string name="setup_ai_description">オンにすると、確定した文字起こし本文と、この画面で設定した辞書・文体サンプルをOpenAIへ送って読みやすく整えます。音声ファイルや入力先アプリの情報は送りません。OpenAI APIの従量料金がかかりますが、AIオフ／「そのまま」モードではOpenAI費用は発生しません。</string>
+    <string name="setup_long_input_note">1回の上限は10分です。60秒間音声が無いと安全停止します。端末の認識サービスが短い間で区切ったときは、「聞き取り中」に戻ってから続きを話すと文頭の欠けを防ぎやすくなります。</string>
     <string name="setup_ai_enabled">OpenAIのAI整形を使う</string>
     <string name="setup_api_key_saved">● OpenAI APIキー：保存済み</string>
     <string name="setup_api_key_not_saved">● OpenAI APIキー：未設定</string>

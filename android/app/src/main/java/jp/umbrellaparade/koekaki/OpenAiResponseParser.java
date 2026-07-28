@@ -6,7 +6,7 @@ import org.json.JSONObject;
 
 /** Extracts plain assistant text from a raw Responses API response. */
 public final class OpenAiResponseParser {
-    public static final int MAX_OUTPUT_CHARS = 20_000;
+    public static final int MAX_OUTPUT_CHARS = 40_000;
 
     private OpenAiResponseParser() {
     }

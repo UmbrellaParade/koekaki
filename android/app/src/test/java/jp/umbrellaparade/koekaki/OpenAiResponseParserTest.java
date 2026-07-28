@@ -45,6 +45,15 @@ public final class OpenAiResponseParserTest {
         assertRejected(response, OpenAiResponseParser.Reason.TOO_LARGE);
     }
 
+    @Test
+    public void parsePolishedText_acceptsOutputAtExpandedCharacterLimit() throws Exception {
+        String text = "文".repeat(OpenAiResponseParser.MAX_OUTPUT_CHARS);
+        String response = "{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":["
+                + "{\"type\":\"output_text\",\"text\":\"" + text + "\"}]}]}";
+
+        assertEquals(text, OpenAiResponseParser.parsePolishedText(response));
+    }
+
     private static void assertRejected(String value, OpenAiResponseParser.Reason expectedReason) {
         try {
             OpenAiResponseParser.parsePolishedText(value);

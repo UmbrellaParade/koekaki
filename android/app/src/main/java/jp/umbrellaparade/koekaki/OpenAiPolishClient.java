@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 import javax.net.ssl.HttpsURLConnection;
 
@@ -22,14 +23,18 @@ import javax.net.ssl.HttpsURLConnection;
 public final class OpenAiPolishClient {
     static final String ENDPOINT = "https://api.openai.com/v1/responses";
     static final int CONNECT_TIMEOUT_MS = 10_000;
-    static final int READ_TIMEOUT_MS = 45_000;
-    static final int MAX_INPUT_CHARS = 12_000;
+    static final int READ_TIMEOUT_MS = 75_000;
+    static final int MAX_INPUT_CHARS = 20_000;
     static final int MAX_INSTRUCTIONS_CHARS = 24_000;
-    static final int MAX_REQUEST_BYTES = 96 * 1024;
-    static final int MAX_RESPONSE_BYTES = 256 * 1024;
-    static final int MAX_OUTPUT_TOKENS = 4_096;
+    static final int MAX_REQUEST_BYTES = 256 * 1024;
+    static final int MAX_RESPONSE_BYTES = 512 * 1024;
+    static final int MAX_OUTPUT_TOKENS = 8_192;
     private static final int CONNECTION_TEST_OUTPUT_TOKENS = 128;
     private static final String DEFAULT_MODEL = "gpt-4.1-mini";
+    private static final double EDITING_TEMPERATURE = 0.2d;
+    private static final Pattern LOW_TEMPERATURE_TEXT_MODEL = Pattern.compile(
+            "^gpt-(?:4\\.1(?:-(?:mini|nano))?|4o(?:-mini)?)"
+                    + "(?:-[0-9]{4}-[0-9]{2}-[0-9]{2})?$");
 
     private final String model;
     private final ConnectionFactory connectionFactory;
@@ -99,13 +104,18 @@ public final class OpenAiPolishClient {
             String input,
             int maxOutputTokens) throws OpenAiException {
         try {
-            return new JSONObject()
-                    .put("model", validateModel(model))
+            String validatedModel = validateModel(model);
+            JSONObject request = new JSONObject()
+                    .put("model", validatedModel)
                     .put("instructions", instructions)
                     .put("input", input)
                     .put("store", false)
                     .put("max_output_tokens", Math.max(1,
                             Math.min(MAX_OUTPUT_TOKENS, maxOutputTokens)));
+            if (LOW_TEMPERATURE_TEXT_MODEL.matcher(validatedModel).matches()) {
+                request.put("temperature", EDITING_TEMPERATURE);
+            }
+            return request;
         } catch (JSONException exception) {
             throw new OpenAiException(ErrorKind.INVALID_REQUEST, 0);
         }

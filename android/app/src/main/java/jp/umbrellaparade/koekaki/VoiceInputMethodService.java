@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.inputmethodservice.InputMethodService;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,6 +21,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -32,7 +34,7 @@ public final class VoiceInputMethodService extends InputMethodService {
     private static final int MAX_TRANSIENT_RETRIES = 3;
     private static final long SEGMENT_RESTART_DELAY_MS = 300L;
     private static final long STOP_RESULT_TIMEOUT_MS = 3_000L;
-    private static final long POLISH_TIMEOUT_MS = 60_000L;
+    private static final long POLISH_TIMEOUT_MS = 90_000L;
     private static final long IDLE_SESSION_TIMEOUT_MS = 60_000L;
     private static final long MAX_SESSION_DURATION_MS = 10L * 60L * 1_000L;
 
@@ -67,6 +69,8 @@ public final class VoiceInputMethodService extends InputMethodService {
     private String sessionPackageName;
     private InputConnection sessionConnection;
     private String transcript = "";
+    private String polishTranscript = "";
+    private String pendingPartial = "";
     private String latestPartial = "";
     private long activeToken;
     private SessionPhase phase = SessionPhase.IDLE;
@@ -223,6 +227,8 @@ public final class VoiceInputMethodService extends InputMethodService {
         segmentInFlight = false;
         transientRetries = 0;
         transcript = "";
+        polishTranscript = "";
+        pendingPartial = "";
         latestPartial = "";
         sessionGeneration = inputGeneration;
         sessionPackageName = editor.packageName == null ? "" : editor.packageName;
@@ -268,7 +274,16 @@ public final class VoiceInputMethodService extends InputMethodService {
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.JAPAN.toLanguageTag());
         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
-        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Android 13+ recognizers can return a punctuation-formatted first hypothesis and
+            // the unformatted text second. Implementations may ignore this optional hint.
+            intent.putExtra(
+                    RecognizerIntent.EXTRA_ENABLE_FORMATTING,
+                    RecognizerIntent.FORMATTING_OPTIMIZE_QUALITY);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 2);
+        } else {
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        }
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_500L);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1_800L);
         intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3_000L);
@@ -315,9 +330,10 @@ public final class VoiceInputMethodService extends InputMethodService {
         segmentInFlight = false;
         removeStopTimeout();
 
-        String finalText = firstResult(results);
-        if (finalText.trim().isEmpty()) finalText = latestPartial;
-        transcript = TranscriptAccumulator.append(transcript, finalText);
+        String finalText = RecognitionResultSelector.select(firstResult(results), latestPartial);
+        boolean capturedText = !pendingPartial.trim().isEmpty() || !finalText.trim().isEmpty();
+        flushPendingPartial();
+        appendRecognizedSegment(finalText);
         latestPartial = "";
         transientRetries = 0;
 
@@ -325,7 +341,12 @@ public final class VoiceInputMethodService extends InputMethodService {
             finalizeTranscriptForOutput(token, false);
         } else {
             resetIdleTimeout(token);
-            scheduleRestart(token, SEGMENT_RESTART_DELAY_MS);
+            scheduleRestart(
+                    token,
+                    SEGMENT_RESTART_DELAY_MS,
+                    capturedText
+                            ? R.string.status_segment_saved
+                            : R.string.status_recognition_retrying);
         }
     }
 
@@ -339,11 +360,13 @@ public final class VoiceInputMethodService extends InputMethodService {
             return;
         }
 
-        preserveLatestPartial();
-
         if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+            // Keep the provisional hypothesis separate until the next final result. This avoids
+            // both losing a spoken phrase and prematurely committing a hypothesis that may be
+            // covered by the next recognizer result.
+            stashLatestPartial();
             transientRetries = 0;
-            scheduleRestart(token, 450L);
+            scheduleRestart(token, 450L, R.string.status_recognition_retrying);
             return;
         }
 
@@ -353,24 +376,27 @@ public final class VoiceInputMethodService extends InputMethodService {
                 || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
             transientRetries += 1;
             if (transientRetries <= MAX_TRANSIENT_RETRIES) {
+                stashLatestPartial();
                 long delay = 500L * transientRetries;
-                scheduleRestart(token, delay);
+                scheduleRestart(token, delay, R.string.status_recognition_retrying);
                 return;
             }
         }
 
         int message = recognitionErrorMessage(error);
-        if (!transcript.trim().isEmpty() || !latestPartial.trim().isEmpty()) {
+        if (!transcript.trim().isEmpty()
+                || !pendingPartial.trim().isEmpty()
+                || !latestPartial.trim().isEmpty()) {
             finalizeTranscriptForOutput(token, true, R.string.status_inserted_after_error);
         } else {
             finishWithoutCommit(message);
         }
     }
 
-    private void scheduleRestart(long token, long delayMillis) {
+    private void scheduleRestart(long token, long delayMillis, int statusResource) {
         if (!isCurrentRecognitionSession(token) || phase != SessionPhase.LISTENING) return;
         removeRestart();
-        setStatus(R.string.status_preparing);
+        setStatus(statusResource);
         setVolumeVisible(false);
         restartRunnable = () -> startSegment(token);
         handler.postDelayed(restartRunnable, delayMillis);
@@ -385,8 +411,11 @@ public final class VoiceInputMethodService extends InputMethodService {
             boolean includePartial,
             int successMessage) {
         if (!isCurrentRecognitionSession(token)) return;
-        if (includePartial) transcript = TranscriptAccumulator.append(transcript, latestPartial);
+        flushPendingPartial();
+        if (includePartial) appendRecognizedSegment(latestPartial);
         String rawText = transcript.trim();
+        String structuredText = polishTranscript.trim();
+        if (structuredText.isEmpty()) structuredText = rawText;
 
         if (rawText.isEmpty()) {
             finishWithoutCommit(R.string.status_no_speech);
@@ -409,9 +438,14 @@ public final class VoiceInputMethodService extends InputMethodService {
             return;
         }
 
+        String fallbackText = ProsePunctuationGuard.apply(rawText, modeId);
+
         SecureApiKeyStore keyStore = new SecureApiKeyStore(this);
         if (!keyStore.hasSavedKey()) {
-            commitTextForSession(token, rawText, R.string.status_inserted_without_ai_key);
+            commitTextForSession(
+                    token,
+                    fallbackText,
+                    fallbackStatus(successMessage, true));
             return;
         }
 
@@ -425,12 +459,15 @@ public final class VoiceInputMethodService extends InputMethodService {
                 settings.getBoolean(
                         KoekakiSettings.KEY_USE_BUILTIN_TERMS,
                         KoekakiSettings.DEFAULT_USE_BUILTIN_TERMS));
-        String input = KoekakiPrompts.buildPolishInput(rawText);
+        String input = KoekakiPrompts.buildPolishInput(structuredText);
         final OpenAiPolishClient client;
         try {
             client = new OpenAiPolishClient(model);
         } catch (IllegalArgumentException exception) {
-            commitTextForSession(token, rawText, R.string.status_inserted_without_ai);
+            commitTextForSession(
+                    token,
+                    fallbackText,
+                    fallbackStatus(successMessage, false));
             return;
         }
 
@@ -466,7 +503,7 @@ public final class VoiceInputMethodService extends InputMethodService {
                         token,
                         requestEpoch,
                         client,
-                        rawText,
+                        fallbackText,
                         result,
                         requestSucceeded,
                         successMessage));
@@ -475,12 +512,16 @@ public final class VoiceInputMethodService extends InputMethodService {
                     token,
                     requestEpoch,
                     client,
-                    rawText);
+                    fallbackText,
+                    successMessage);
             handler.postDelayed(polishTimeoutRunnable, POLISH_TIMEOUT_MS);
         } catch (RuntimeException exception) {
             polishEpochGate.cancel();
             activePolishClient = null;
-            commitTextForSession(token, rawText, R.string.status_inserted_without_ai);
+            commitTextForSession(
+                    token,
+                    fallbackText,
+                    fallbackStatus(successMessage, false));
         }
     }
 
@@ -488,7 +529,7 @@ public final class VoiceInputMethodService extends InputMethodService {
             long token,
             long requestEpoch,
             OpenAiPolishClient client,
-            String rawText,
+            String fallbackText,
             String polishedText,
             boolean succeeded,
             int successMessage) {
@@ -505,8 +546,15 @@ public final class VoiceInputMethodService extends InputMethodService {
             return;
         }
 
-        String output = succeeded ? polishedText.trim() : rawText;
-        int message = succeeded ? successMessage : R.string.status_inserted_without_ai;
+        String output = succeeded ? polishedText.trim() : fallbackText;
+        int message;
+        if (!succeeded) {
+            message = fallbackStatus(successMessage, false);
+        } else if (successMessage == R.string.status_inserted_after_error) {
+            message = R.string.status_inserted_with_ai_after_recognition_error;
+        } else {
+            message = R.string.status_inserted_with_ai;
+        }
         commitTextForSession(token, output, message);
     }
 
@@ -514,7 +562,8 @@ public final class VoiceInputMethodService extends InputMethodService {
             long token,
             long requestEpoch,
             OpenAiPolishClient client,
-            String rawText) {
+            String fallbackText,
+            int successMessage) {
         polishTimeoutRunnable = null;
         if (!isCurrentSession(token)
                 || phase != SessionPhase.POLISHING
@@ -529,7 +578,10 @@ public final class VoiceInputMethodService extends InputMethodService {
             finishWithoutCommit(R.string.status_target_changed);
             return;
         }
-        commitTextForSession(token, rawText, R.string.status_inserted_without_ai);
+        commitTextForSession(
+                token,
+                fallbackText,
+                fallbackStatus(successMessage, false));
     }
 
     private void commitTextForSession(long token, String text, int successMessage) {
@@ -563,6 +615,9 @@ public final class VoiceInputMethodService extends InputMethodService {
         }
 
         setStatus(successMessage);
+        if (shouldShowPersistentNotice(successMessage)) {
+            Toast.makeText(this, successMessage, Toast.LENGTH_LONG).show();
+        }
         if (shouldReturn) {
             int returnGeneration = inputGeneration;
             autoReturnRunnable = () -> {
@@ -606,6 +661,8 @@ public final class VoiceInputMethodService extends InputMethodService {
         transientRetries = 0;
         activeToken += 1;
         transcript = "";
+        polishTranscript = "";
+        pendingPartial = "";
         latestPartial = "";
         sessionPackageName = null;
         sessionConnection = null;
@@ -682,7 +739,20 @@ public final class VoiceInputMethodService extends InputMethodService {
             setStatus(R.string.status_sensitive);
         } else {
             speakButton.setEnabled(true);
-            setStatus(R.string.status_ready);
+            SharedPreferences settings = preferences();
+            String modeId = KoekakiPrompts.findMode(settings.getString(
+                    KoekakiSettings.KEY_ACTIVE_MODE_ID,
+                    KoekakiSettings.DEFAULT_MODE_ID)).getId();
+            boolean aiEnabled = settings.getBoolean(
+                    KoekakiSettings.KEY_AI_POLISH_ENABLED,
+                    KoekakiSettings.DEFAULT_AI_POLISH_ENABLED);
+            if (!aiEnabled || KoekakiPrompts.isRawMode(modeId)) {
+                setStatus(R.string.status_ready_without_ai);
+            } else if (!new SecureApiKeyStore(this).hasSavedKey()) {
+                setStatus(R.string.status_ready_without_ai_key);
+            } else {
+                setStatus(R.string.status_ready_with_ai);
+            }
         }
     }
 
@@ -788,9 +858,40 @@ public final class VoiceInputMethodService extends InputMethodService {
         autoReturnRunnable = null;
     }
 
-    private void preserveLatestPartial() {
-        transcript = TranscriptAccumulator.append(transcript, latestPartial);
+    private void appendRecognizedSegment(String segment) {
+        transcript = TranscriptAccumulator.append(transcript, segment);
+        polishTranscript = TranscriptAccumulator.appendWithBoundary(polishTranscript, segment);
+    }
+
+    private void stashLatestPartial() {
+        pendingPartial = TranscriptAccumulator.append(pendingPartial, latestPartial);
         latestPartial = "";
+    }
+
+    private void flushPendingPartial() {
+        appendRecognizedSegment(pendingPartial);
+        pendingPartial = "";
+    }
+
+    private static boolean shouldShowPersistentNotice(int messageResource) {
+        return messageResource == R.string.status_inserted_with_ai
+                || messageResource == R.string.status_inserted_after_error
+                || messageResource == R.string.status_inserted_with_ai_after_recognition_error
+                || messageResource == R.string.status_inserted_without_ai
+                || messageResource == R.string.status_inserted_without_ai_key
+                || messageResource == R.string.status_inserted_after_error_without_ai
+                || messageResource == R.string.status_inserted_after_error_without_ai_key;
+    }
+
+    private static int fallbackStatus(int successMessage, boolean keyMissing) {
+        if (successMessage == R.string.status_inserted_after_error) {
+            return keyMissing
+                    ? R.string.status_inserted_after_error_without_ai_key
+                    : R.string.status_inserted_after_error_without_ai;
+        }
+        return keyMissing
+                ? R.string.status_inserted_without_ai_key
+                : R.string.status_inserted_without_ai;
     }
 
     private SharedPreferences preferences() {

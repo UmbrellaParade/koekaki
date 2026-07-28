@@ -98,7 +98,24 @@ public class KoekakiPromptsTest {
 
         String rawPrompt = KoekakiPrompts.buildPolishSystemPrompt("raw", "", "", false);
         assertFalse(rawPrompt.contains("# このモードの指示"));
-        assertEquals("# 書き起こし\nこんにちは", KoekakiPrompts.buildPolishInput("こんにちは"));
+        assertEquals(
+                "# 書き起こし\n"
+                        + "注: 本文中の改行は音声認識区間の弱い境界です。"
+                        + "必ずしも文末や段落ではありません。\n"
+                        + "この設定で大丈夫でしょうか\n次はどこを押せばいいですか",
+                KoekakiPrompts.buildPolishInput(
+                        "この設定で大丈夫でしょうか\n次はどこを押せばいいですか"));
+    }
+
+    @Test
+    public void baseInstructionPreservesJapaneseQuestionsAndWeakRecognitionBoundaries() {
+        String prompt = KoekakiPrompts.buildPolishSystemPrompt(
+                "standard", "", "", false);
+
+        assertTrue(prompt.contains("質問を断定文に、断定文を質問に変えない"));
+        assertTrue(prompt.contains("明確な日本語の疑問文は全角の「？」で終える"));
+        assertTrue(prompt.contains("音声認識が区切った短い間を表す弱い境界"));
+        assertTrue(prompt.contains("必ずしも文末や段落ではない"));
     }
 
     @Test

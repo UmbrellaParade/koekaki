@@ -84,10 +84,11 @@ starting / recording / transcribing / polishing の4状態だけを受信しま�
 `いつものキーボード`、常時見える設定、初回セットアップ、自動復帰設定があります。
 
 このPCにはAndroid Studio / JDK / SDK / Gradleが無いため、Android側は
-`.github/workflows/android.yml` で40件の単体テスト・Lint・debug APK生成を行います。OpenAIの
+`.github/workflows/android.yml` で59件の単体テスト・Lint・debug APK生成を行います。OpenAIの
 AI整形、raw＋11モード、組み込み用語、ユーザー辞書、文体サンプル、AndroidKeyStoreでの
-APIキー暗号化まで接続済みです。APKの実機インストール、API実通信、Codex / Claude / LINE入力は
-未確認なので、完了扱いにしないでください。
+APIキー暗号化まで接続済みです。依頼主の実機でAPKのインストールと音声入力が利用できることは
+確認済みです。句読点・長文改善版、API実通信の成功表示、Codex / Claude / LINE別の入力は
+引き続き実機確認が必要です。
 
 現在のPWAでは、スマホのブラウザ内蔵認識を `continuous = false` の短い区切りで動かし、
 短い無音で `onend` になっても停止操作までは自動再開します。区切り前後の重複除去、

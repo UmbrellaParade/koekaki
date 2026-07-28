@@ -40,6 +40,72 @@ public final class OpenAiPolishClientTest {
         assertFalse(request.getBoolean("store"));
         assertEquals(OpenAiPolishClient.MAX_OUTPUT_TOKENS,
                 request.getInt("max_output_tokens"));
+        assertEquals(0.2d, request.getDouble("temperature"), 0.0d);
+    }
+
+    @Test
+    public void buildRequest_addsLowTemperatureOnlyForKnownNonReasoningTextModels()
+            throws Exception {
+        String[] knownTextModels = {
+                "gpt-4.1",
+                "gpt-4.1-mini-2025-04-14",
+                "gpt-4o",
+                "gpt-4o-mini-2024-07-18"
+        };
+        for (String model : knownTextModels) {
+            JSONObject request = OpenAiPolishClient.buildRequest(
+                    model, "文章を整えてください。", "入力です。", 100);
+            assertEquals(model, request.getString("model"));
+            assertEquals(0.2d, request.getDouble("temperature"), 0.0d);
+        }
+
+        String[] modelsWithoutTemperature = {
+                "gpt-5.6-luna",
+                "gpt-4o-mini-transcribe",
+                "custom-reasoning-model"
+        };
+        for (String model : modelsWithoutTemperature) {
+            JSONObject request = OpenAiPolishClient.buildRequest(
+                    model, "文章を整えてください。", "入力です。", 100);
+            assertFalse(request.has("temperature"));
+        }
+    }
+
+    @Test
+    public void polish_acceptsMaximumBoundedJapaneseInstructionsAndInput() throws Exception {
+        String response = "{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":["
+                + "{\"type\":\"output_text\",\"text\":\"整形済みです。\"}]}]}";
+        FakeHttpsConnection connection = new FakeHttpsConnection(
+                new ByteArrayInputStream(response.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        OpenAiPolishClient client = new OpenAiPolishClient(
+                "gpt-4.1-mini", ignored -> connection);
+
+        assertEquals("整形済みです。", client.polish(
+                "dummy-key",
+                "規".repeat(OpenAiPolishClient.MAX_INSTRUCTIONS_CHARS),
+                "文".repeat(OpenAiPolishClient.MAX_INPUT_CHARS)));
+        assertTrue(connection.requestBody.size() > 96 * 1024);
+        assertTrue(connection.requestBody.size() < OpenAiPolishClient.MAX_REQUEST_BYTES);
+    }
+
+    @Test
+    public void polish_rejectsInputAboveExpandedCharacterLimitBeforeOpeningConnection() {
+        boolean[] opened = {false};
+        OpenAiPolishClient client = new OpenAiPolishClient("gpt-4.1-mini", ignored -> {
+            opened[0] = true;
+            throw new IOException("must not open");
+        });
+
+        try {
+            client.polish(
+                    "dummy-key",
+                    "文章を整えてください。",
+                    "文".repeat(OpenAiPolishClient.MAX_INPUT_CHARS + 1));
+            fail("Expected oversized-input rejection");
+        } catch (OpenAiPolishClient.OpenAiException exception) {
+            assertEquals(OpenAiPolishClient.ErrorKind.INPUT_TOO_LARGE, exception.getKind());
+        }
+        assertFalse(opened[0]);
     }
 
     @Test

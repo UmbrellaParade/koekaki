@@ -83,7 +83,9 @@ iOSは同等機能の実装対象にせず、現在のPWAで「録音 → 整形
 
 - `話す` / `停止して入力` / `取り消す` の明示的な操作
 - 端末の `SpeechRecognizer` が短い無音で終了しても区切って自動再開（無音60秒、全体10分で安全停止）
-- 区切り境界の重複を除き、認識途中文を表示せず、最終文を1回だけ挿入
+- 2文字以上の境界重複だけを除き、1文字の偶然一致による長文欠落を防止
+- Android 13以降では対応する認識サービスへ句読点の品質優先を要求し、finalで消えた末尾記号をpartialから安全に救済
+- 自動再開時の未確定partialは保留し、次のfinalまたは停止時に重複を統合して救済。AI入力では認識区切りを弱い改行境界として保持
 - 開始時の `InputConnection`、入力セッション、package、field IDを停止時に再確認
 - 入力先の変更、接続切れ、パスワード欄、`TYPE_NULL` では挿入しない
 - `⌨ いつものキーボード`、設定ボタン、挿入後の自動復帰設定
@@ -91,12 +93,12 @@ iOSは同等機能の実装対象にせず、現在のPWAで「録音 → 整形
 - OpenAI Responses APIによるAI整形、raw＋11モード、組み込み用語、ユーザー辞書、文体サンプル
 - APIキーをAPKへ埋め込まず、AndroidKeyStoreのAES-256-GCMで端末内に暗号化保存
 - AI通信中の取消・入力先変更・IME非表示で通信と挿入を破棄し、失敗時は認識文を1回だけ挿入
-- GitHub Actionsで40件の単体テスト、Lint、debug APK生成、14日間のArtifact保存
+- GitHub Actionsで59件の単体テスト、Lint、debug APK生成、14日間のArtifact保存
 
 Android版の設定はWeb版とは別保存です。AIへ送るのは確定した認識文と、利用者が設定した
 辞書・文体だけで、音声ファイル、入力先アプリ、周辺文は送りません。端末内のAPIキー保存は
 単一ユーザーのdebug APK検証用であり、一般配布版ではキーを置かないバックエンド方式へ
 移行します。このPCにはAndroid Studio / JDK / SDK / Gradleが無いため、ビルドはGitHub Actionsで
-行います。APKのインストール、APIキー保存と実通信、Codex / Claude / LINEへの挿入、
-Pixel / Samsung、Gboard / Samsung Keyboardでの挙動は、依頼主のAndroid実機で確認するまで
-未確認です。
+行います。APKのインストールと音声入力が利用できることは依頼主のAndroid実機で確認済みです。
+句読点・長文改善版、API実通信の成功表示、Codex / Claude / LINEへの挿入、Pixel / Samsung、
+Gboard / Samsung Keyboardでの挙動は、引き続き依頼主の実機で確認します。

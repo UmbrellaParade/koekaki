@@ -317,7 +317,7 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 - デスクトップ版ではAPIキーを `safeStorage` で暗号化し、Web版の保存領域と分離
 - スマホ幅（375px）での表示崩れなし、ダーク/ライト両対応
 - **実機（Android）で羅列バグの解消と、APIキー入力の復旧を依頼主が確認済み**
-- Android音声専用IMEのソース、OpenAI AI整形、初回設定導線、安全な入力先照合、40件のJVMテスト、APK生成CI
+- Android音声専用IMEのソース、OpenAI AI整形、初回設定導線、安全な入力先照合、59件のJVMテスト、APK生成CI
 
 ### 未確認
 
@@ -483,8 +483,10 @@ electron/
 - [x] OpenAI Responses APIのAI整形、raw＋11モード、組み込み用語、ユーザー辞書、文体サンプル
 - [x] AndroidKeyStoreによるAPIキー暗号化、接続テスト、削除、バックアップ除外
 - [x] AI待機中の入力先再確認、取消・IME切替時の通信停止、失敗時の認識文フォールバック
-- [ ] 依頼主のAndroid実機でAPKをインストールし、Codex / Claude / LINE、Pixel / Samsung、
-      Gboard / Samsung Keyboardを確認
+- [x] 依頼主のAndroid実機でAPKのインストールと音声入力が利用できることを確認
+- [x] Android 13以降の句読点品質要求、末尾記号救済、1文字の偶然一致による欠けを修正。未確定partialは次のfinalまで保留して重複統合
+- [ ] 句読点・長文改善版を実機で再確認し、Codex / Claude / LINE、Pixel / Samsung、
+      Gboard / Samsung Keyboardの組み合わせを確認
 
 Android版はCodex / Claudeを名前で許可する実装ではなく、
 LINEを含む通常の入力欄へ共通経路で挿入します。このPCにはAndroid Studio、JDK、SDK、Gradle、ADBが
