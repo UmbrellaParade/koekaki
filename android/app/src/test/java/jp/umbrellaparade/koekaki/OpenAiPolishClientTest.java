@@ -145,7 +145,7 @@ public final class OpenAiPolishClientTest {
         private final ByteArrayOutputStream requestBody = new ByteArrayOutputStream();
         private volatile boolean disconnected;
 
-        FakeHttpsConnection(InputStream inputStream) throws Exception {
+        FakeHttpsConnection(InputStream inputStream) throws IOException {
             super(new URL(OpenAiPolishClient.ENDPOINT));
             this.inputStream = inputStream;
         }
