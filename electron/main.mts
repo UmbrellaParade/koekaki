@@ -38,11 +38,23 @@ import {
   type DesktopApiKeys,
   type DesktopPhase,
 } from './desktopProtocol.js'
-import { LineBuffer, parseHotkeyLine } from './hotkeyProtocol.js'
+import {
+  LineBuffer,
+  parseHotkeyLine,
+  parsePasteStatusLine,
+  type PasteStatus,
+  type PasteTarget,
+} from './hotkeyProtocol.js'
+
+type PasteHelperRun =
+  | { kind: 'status'; status: PasteStatus }
+  | { kind: 'not-started' }
+  | { kind: 'ambiguous' }
 
 const HOTKEY_READY_TIMEOUT_MS = 8_000
 const HOTKEY_SELF_TEST_TIMEOUT_MS = 12_000
 const DESKTOP_SELF_TEST_TIMEOUT_MS = 20_000
+const PASTE_HELPER_TIMEOUT_MS = 12_000
 const DEVELOPMENT_URLS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173'])
 const EMPTY_API_KEYS: DesktopApiKeys = { gemini: '', openai: '', anthropic: '' }
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
@@ -63,8 +75,9 @@ let rendererReady = false
 let rendererPhase: DesktopPhase = 'idle'
 let rendererIssue = ''
 let currentRequestId: string | null = null
+let currentPasteTarget: PasteTarget | null = null
 let stopRequested = false
-let copiedLastResult = false
+let lastDelivery: 'none' | 'pasted' | 'copied' | 'cancelled' = 'none'
 let toggleCount = 0
 let hotkeyReadyTimer: NodeJS.Timeout | null = null
 let selfTestTimer: NodeJS.Timeout | null = null
@@ -74,6 +87,10 @@ let selfTestProtocolPassed = false
 let selfTestFinished = false
 let quitting = false
 let apiKeySaveTail: Promise<void> = Promise.resolve()
+let deliveryTail: Promise<void> = Promise.resolve()
+const deliveryPromises = new Map<string, Promise<void>>()
+const deliveryOrder: string[] = []
+const activePasteProcesses = new Set<ChildProcess>()
 
 registerDesktopScheme()
 app.enableSandbox()
@@ -137,7 +154,10 @@ function phaseLabel(): string {
   if (rendererPhase === 'transcribing') return '文字起こし中'
   if (rendererPhase === 'polishing') return '文章を整形中'
   if (rendererPhase === 'error') return '処理エラー'
-  return copiedLastResult ? '待機中（コピー済み）' : '待機中'
+  if (lastDelivery === 'pasted') return '待機中（入力済み）'
+  if (lastDelivery === 'copied') return '待機中（コピー済み）'
+  if (lastDelivery === 'cancelled') return '待機中（入力を中止）'
+  return '待機中'
 }
 
 function trayStatus(): string {
@@ -227,17 +247,21 @@ function sendDesktopCommand(action: 'start' | 'stop', requestId: string): boolea
   return true
 }
 
-function handleRightAlt() {
+function handleRightAlt(target: PasteTarget | null) {
   if (hookPaused || quitting || !rendererReady) return
   toggleCount += 1
 
   if (currentRequestId === null && rendererPhase === 'idle') {
     const requestId = randomUUID()
     currentRequestId = requestId
+    currentPasteTarget = target
     stopRequested = false
-    copiedLastResult = false
+    lastDelivery = 'none'
     rendererIssue = ''
-    if (!sendDesktopCommand('start', requestId)) currentRequestId = null
+    if (!sendDesktopCommand('start', requestId)) {
+      currentRequestId = null
+      currentPasteTarget = null
+    }
     updateTrayMenu()
     return
   }
@@ -273,7 +297,7 @@ function handleHotkeyLine(rawLine: string, selfTest: boolean) {
       selfTestToggleCount += 1
       return
     }
-    handleRightAlt()
+    handleRightAlt(message.target ?? null)
     return
   }
 
@@ -382,6 +406,216 @@ async function stopHotkey(): Promise<void> {
   })
 }
 
+function pasteStatusMatchesExit(status: PasteStatus, exitCode: number | null): boolean {
+  if (status.type === 'ok-restored' || status.type === 'ok-not-restored') return exitCode === 0
+  if (status.type === 'send-failed') return exitCode === 3
+  if (status.type === 'skipped' && status.reason === 'clipboard-failed') return exitCode === 4
+  if (status.type === 'skipped' && status.reason === 'clipboard-changed') return exitCode === 5
+  if (status.type === 'skipped') return exitCode === 2
+  return false
+}
+
+function runPasteHelper(target: PasteTarget, text: string): Promise<PasteHelperRun> {
+  return new Promise((resolve) => {
+    const args = [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-STA',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      hotkeyScriptPath(),
+      '-Paste',
+      '-TargetHandle',
+      target.windowHandle,
+      '-TargetProcessId',
+      String(target.processId),
+      '-TargetThreadId',
+      String(target.threadId),
+      '-OwnerProcessId',
+      String(process.pid),
+    ]
+
+    let child: ChildProcess
+    try {
+      child = spawn(powershellPath(), args, {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+    } catch {
+      resolve({ kind: 'not-started' })
+      return
+    }
+
+    activePasteProcesses.add(child)
+    let processStarted = child.pid !== undefined
+    const stdout = new LineBuffer()
+    const statuses: PasteStatus[] = []
+    let invalidOutput = false
+    let outputChars = 0
+    let settled = false
+    let timedOut = false
+    let runtimeError = false
+    let timer: NodeJS.Timeout | null = null
+
+    const consumeLine = (line: string) => {
+      const parsed = parsePasteStatusLine(line)
+      if (!parsed) invalidOutput = true
+      else statuses.push(parsed)
+    }
+    const finish = (result: PasteHelperRun) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      activePasteProcesses.delete(child)
+      resolve(result)
+    }
+
+    timer = setTimeout(() => {
+      timedOut = true
+      child.kill()
+    }, PASTE_HELPER_TIMEOUT_MS)
+
+    child.once('spawn', () => {
+      processStarted = true
+    })
+    child.stdout?.on('data', (chunk: Buffer) => {
+      outputChars += chunk.length
+      if (outputChars > 4_096) {
+        invalidOutput = true
+        child.kill()
+        return
+      }
+      for (const line of stdout.push(chunk.toString('utf8'))) consumeLine(line)
+    })
+    child.stderr?.on('data', () => {
+      // Drain the pipe. Paste errors are fixed status codes and never logged here.
+    })
+    child.once('error', () => {
+      if (!processStarted) {
+        finish({ kind: 'not-started' })
+        return
+      }
+      runtimeError = true
+      child.kill()
+    })
+    child.once('close', (code) => {
+      for (const line of stdout.flush()) consumeLine(line)
+      const status = statuses.length === 1 ? statuses[0] : null
+      finish(
+        !timedOut && !runtimeError && !invalidOutput && status && pasteStatusMatchesExit(status, code)
+          ? { kind: 'status', status }
+          : { kind: 'ambiguous' },
+      )
+    })
+
+    child.stdin?.on('error', () => {
+      // The close handler classifies any incomplete protocol as ambiguous.
+    })
+    try {
+      if (!child.stdin) throw new Error('Paste helper stdin is unavailable')
+      child.stdin.end(text, 'utf8')
+    } catch {
+      if (!processStarted) {
+        child.kill()
+        finish({ kind: 'not-started' })
+      } else {
+        runtimeError = true
+        child.kill()
+      }
+    }
+  })
+}
+
+function copyDeliveryFallback(text: string, message: string) {
+  try {
+    clipboard.writeText(text)
+    lastDelivery = 'copied'
+    displayBalloon(message, 'warning')
+  } catch {
+    lastDelivery = 'cancelled'
+    displayBalloon('文章を直接入力できず、クリップボードへのコピーにも失敗しました。', 'error')
+  }
+}
+
+function notifyAmbiguousDelivery() {
+  lastDelivery = 'cancelled'
+  displayBalloon(
+    '貼り付け処理の結果が不明なため、クリップボードへの追加の上書きは行っていません。文章はこえかきの結果画面または履歴からコピーしてください。',
+    'warning',
+  )
+}
+
+function notifyClipboardUnavailable() {
+  lastDelivery = 'cancelled'
+  displayBalloon(
+    'クリップボードを安全に更新できなかったため、追加の上書きは行っていません。文章はこえかきの結果画面または履歴からコピーしてください。',
+    'warning',
+  )
+}
+
+async function deliverDictation(text: string, target: PasteTarget | null): Promise<void> {
+  if (!target) {
+    copyDeliveryFallback(text, '入力先を特定できなかったため、文章をクリップボードにコピーしました。')
+    updateTrayMenu()
+    return
+  }
+
+  const result = await runPasteHelper(target, text)
+  if (result.kind === 'not-started') {
+    copyDeliveryFallback(text, '貼り付け処理を開始できなかったため、文章をクリップボードにコピーしました。')
+    rendererIssue = ''
+    updateTrayMenu()
+    return
+  }
+  if (result.kind === 'ambiguous') {
+    notifyAmbiguousDelivery()
+    rendererIssue = ''
+    updateTrayMenu()
+    return
+  }
+
+  const { status } = result
+  if (status.type === 'ok-restored' || status.type === 'ok-not-restored') {
+    lastDelivery = 'pasted'
+  } else if (status.type === 'skipped' && status.reason === 'clipboard-changed') {
+    lastDelivery = 'cancelled'
+    displayBalloon('貼り付け中に別のコピー操作があったため、文章の入力を中止しました。', 'warning')
+  } else if (status.type === 'skipped' && status.reason === 'clipboard-failed') {
+    notifyClipboardUnavailable()
+  } else if (
+    status.type === 'send-failed' ||
+    status.type === 'skipped'
+  ) {
+    lastDelivery = 'copied'
+    displayBalloon('直接入力できなかったため、文章をクリップボードに残しました。', 'warning')
+  }
+  rendererIssue = ''
+  updateTrayMenu()
+}
+
+function claimDelivery(requestId: string, text: string, target: PasteTarget | null): Promise<void> {
+  const existing = deliveryPromises.get(requestId)
+  if (existing) return existing
+
+  const delivery = deliveryTail.then(() => deliverDictation(text, target)).catch(() => {
+    notifyAmbiguousDelivery()
+    rendererIssue = ''
+    updateTrayMenu()
+  })
+  deliveryTail = delivery
+  deliveryPromises.set(requestId, delivery)
+  void delivery.then(() => {
+    deliveryOrder.push(requestId)
+    while (deliveryOrder.length > 100) {
+      const oldest = deliveryOrder.shift()
+      if (oldest) deliveryPromises.delete(oldest)
+    }
+  })
+  return delivery
+}
+
 async function setHotkeyPaused(paused: boolean) {
   if (hookTransitioning || hookPaused === paused) return
   hookTransitioning = true
@@ -487,6 +721,7 @@ function registerIpcHandlers() {
     rendererIssue = ''
     rendererPhase = 'idle'
     currentRequestId = null
+    currentPasteTarget = null
     stopRequested = false
     updateTrayMenu()
 
@@ -509,6 +744,7 @@ function registerIpcHandlers() {
     if (payload.phase !== 'error') rendererIssue = ''
     if (payload.phase === 'idle') {
       currentRequestId = null
+      currentPasteTarget = null
       stopRequested = false
     }
     updateTrayMenu()
@@ -533,14 +769,14 @@ function registerIpcHandlers() {
     })
   })
 
-  ipcMain.handle(DESKTOP_CHANNELS.completeDictation, async (event, rawPayload: unknown) => {
+  ipcMain.handle(DESKTOP_CHANNELS.completeDictation, (event, rawPayload: unknown) => {
     requireTrustedIpcSender(event)
     const payload = parseDictationPayload(rawPayload)
-    if (!payload || payload.requestId !== currentRequestId) throw new Error('Invalid dictation result')
-    clipboard.writeText(payload.text)
-    copiedLastResult = true
-    rendererIssue = ''
-    updateTrayMenu()
+    if (!payload) throw new Error('Invalid dictation result')
+    const existing = deliveryPromises.get(payload.requestId)
+    if (existing) return existing
+    if (payload.requestId !== currentRequestId) throw new Error('Invalid dictation result')
+    return claimDelivery(payload.requestId, payload.text, currentPasteTarget)
   })
 
   ipcMain.handle(DESKTOP_CHANNELS.writeClipboard, async (event, rawText: unknown) => {
@@ -602,6 +838,7 @@ async function markRendererUnavailable(message: string) {
   rendererIssue = message
   rendererPhase = 'error'
   currentRequestId = null
+  currentPasteTarget = null
   stopRequested = false
   await stopHotkey()
   if (rendererReady && !hookPaused && !hookProcess && !quitting) {
@@ -780,6 +1017,7 @@ if (!hasSingleInstanceLock) {
     clearHotkeyReadyTimer()
     clearSelfTestTimer()
     hookProcess?.kill()
+    for (const child of activePasteProcesses) child.kill()
   })
 
   app.whenReady().then(() => {
