@@ -28,7 +28,7 @@ public final class OpenAiResponseParserTest {
         assertRejected("not json", OpenAiResponseParser.Reason.MALFORMED);
         assertRejected("{}", OpenAiResponseParser.Reason.MISSING_TEXT);
         assertRejected(
-                "{\"output\":[{\"type\":\"message\",\"content\":[]}]}",
+                "{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[]}]}",
                 OpenAiResponseParser.Reason.MISSING_TEXT);
         assertRejected(
                 "{\"status\":\"incomplete\",\"output\":[{\"type\":\"message\","
