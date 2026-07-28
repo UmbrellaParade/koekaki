@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/koekaki_setup_background"
@@ -116,6 +117,216 @@
             android:layout_marginTop="-4dp"
             android:text="@string/setup_auto_return_keyboard_description"
             android:textAppearance="@style/TextAppearance.Koekaki.Caption" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:background="@drawable/bg_setup_card"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/setup_ai_title"
+                android:textAppearance="@style/TextAppearance.Koekaki.Heading" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/setup_ai_description"
+                android:textAppearance="@style/TextAppearance.Koekaki.Body" />
+
+            <CheckBox
+                android:id="@+id/checkbox_ai_polish"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:buttonTint="@color/koekaki_primary"
+                android:minHeight="48dp"
+                android:text="@string/setup_ai_enabled"
+                android:textColor="@color/koekaki_text_primary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/status_api_key"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="@string/setup_api_key_not_saved"
+                android:textAppearance="@style/TextAppearance.Koekaki.Status" />
+
+            <EditText
+                android:id="@+id/edit_api_key"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_setup_text_input"
+                android:hint="@string/setup_api_key_hint"
+                android:importantForAutofill="noExcludeDescendants"
+                android:importantForContentCapture="noExcludeDescendants"
+                android:inputType="textPassword|textNoSuggestions"
+                android:maxLength="512"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:saveEnabled="false"
+                android:singleLine="true"
+                android:textColor="@color/koekaki_text_primary"
+                android:textColorHint="@color/koekaki_text_hint"
+                android:textSize="15sp"
+                tools:targetApi="q" />
+
+            <Button
+                android:id="@+id/button_paste_api_key"
+                style="@style/Widget.Koekaki.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:text="@string/setup_paste_api_key_button" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/button_save_api_key"
+                    style="@style/Widget.Koekaki.Button.Primary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="@string/setup_save_api_key_button" />
+
+                <Button
+                    android:id="@+id/button_delete_api_key"
+                    style="@style/Widget.Koekaki.Button.Secondary"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:text="@string/setup_delete_api_key_button" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:text="@string/setup_mode_label"
+                android:textAppearance="@style/TextAppearance.Koekaki.Caption" />
+
+            <Spinner
+                android:id="@+id/spinner_polish_mode"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:entries="@array/setup_polish_mode_labels"
+                android:spinnerMode="dialog" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/setup_model_label"
+                android:textAppearance="@style/TextAppearance.Koekaki.Caption" />
+
+            <EditText
+                android:id="@+id/edit_openai_model"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:background="@drawable/bg_setup_text_input"
+                android:hint="@string/setup_model_hint"
+                android:importantForAutofill="no"
+                android:inputType="textVisiblePassword|textNoSuggestions"
+                android:maxLength="100"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:singleLine="true"
+                android:textColor="@color/koekaki_text_primary"
+                android:textColorHint="@color/koekaki_text_hint"
+                android:textSize="15sp" />
+
+            <CheckBox
+                android:id="@+id/checkbox_builtin_terms"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:buttonTint="@color/koekaki_primary"
+                android:minHeight="48dp"
+                android:text="@string/setup_builtin_terms"
+                android:textColor="@color/koekaki_text_primary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/setup_dictionary_label"
+                android:textAppearance="@style/TextAppearance.Koekaki.Caption" />
+
+            <EditText
+                android:id="@+id/edit_user_dictionary"
+                android:layout_width="match_parent"
+                android:layout_height="112dp"
+                android:background="@drawable/bg_setup_text_input"
+                android:gravity="top|start"
+                android:hint="@string/setup_dictionary_hint"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:maxLength="8000"
+                android:padding="14dp"
+                android:textColor="@color/koekaki_text_primary"
+                android:textColorHint="@color/koekaki_text_hint"
+                android:textSize="15sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/setup_style_sample_label"
+                android:textAppearance="@style/TextAppearance.Koekaki.Caption" />
+
+            <EditText
+                android:id="@+id/edit_style_sample"
+                android:layout_width="match_parent"
+                android:layout_height="96dp"
+                android:background="@drawable/bg_setup_text_input"
+                android:gravity="top|start"
+                android:hint="@string/setup_style_sample_hint"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:maxLength="2000"
+                android:padding="14dp"
+                android:textColor="@color/koekaki_text_primary"
+                android:textColorHint="@color/koekaki_text_hint"
+                android:textSize="15sp" />
+
+            <Button
+                android:id="@+id/button_save_ai_settings"
+                style="@style/Widget.Koekaki.Button.Primary"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="14dp"
+                android:text="@string/setup_save_ai_settings_button" />
+
+            <Button
+                android:id="@+id/button_test_openai"
+                style="@style/Widget.Koekaki.Button.Secondary"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
+                android:text="@string/setup_test_openai_button" />
+
+            <TextView
+                android:id="@+id/status_openai_test"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:accessibilityLiveRegion="polite"
+                android:text="@string/setup_test_openai_note"
+                android:textAppearance="@style/TextAppearance.Koekaki.Caption" />
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"

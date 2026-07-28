@@ -7,6 +7,7 @@
 
     <string name="action_speak">話す</string>
     <string name="action_stop">停止して入力</string>
+    <string name="action_processing">処理中</string>
     <string name="action_cancel">取り消す</string>
     <string name="action_previous_keyboard">⌨ いつものキーボード</string>
     <string name="action_settings">設定</string>
@@ -15,9 +16,12 @@
     <string name="status_preparing">音声入力を準備しています…</string>
     <string name="status_listening">録音中です。短い無音でも「停止」まで続けます</string>
     <string name="status_processing">音声を文字にしています…</string>
+    <string name="status_ai_polishing">AIで文章を整えています…</string>
     <string name="status_cancelled">音声入力を取り消しました</string>
     <string name="status_inserted">現在のカーソル位置へ入力しました</string>
     <string name="status_inserted_after_error">音声認識が中断したため、ここまでの内容を入力しました</string>
+    <string name="status_inserted_without_ai">AI整形に失敗したため、聞き取ったまま入力しました</string>
+    <string name="status_inserted_without_ai_key">APIキーが未設定のため、聞き取ったまま入力しました</string>
     <string name="status_sensitive">パスワードなどの保護された欄では音声入力を使えません</string>
     <string name="status_unsupported_field">この入力欄では直接入力を利用できません</string>
     <string name="status_permission_required">マイクの許可が必要です。「設定」から許可してください</string>
@@ -39,10 +43,73 @@
     <string name="setup_choose_input_method_button">3. こえかきを選択する</string>
     <string name="setup_auto_return_keyboard">音声入力後、以前のキーボードへ自動で戻る</string>
     <string name="setup_auto_return_keyboard_description">オンにすると、文章を挿入した直後に普段のキーボードへ戻ります。</string>
+    <string name="setup_ai_title">AIで文章を整える</string>
+    <string name="setup_ai_description">オンにすると、確定した文字起こし本文と、この画面で設定した辞書・文体サンプルをOpenAIへ送って読みやすく整えます。音声ファイルや入力先アプリの情報は送りません。OpenAI APIの従量料金がかかりますが、AIオフ／「そのまま」モードではOpenAI費用は発生しません。</string>
+    <string name="setup_ai_enabled">OpenAIのAI整形を使う</string>
+    <string name="setup_api_key_saved">● OpenAI APIキー：保存済み</string>
+    <string name="setup_api_key_not_saved">● OpenAI APIキー：未設定</string>
+    <string name="setup_api_key_hint">OpenAI APIキーを貼り付け</string>
+    <string name="setup_paste_api_key_button">クリップボードから貼り付け</string>
+    <string name="setup_save_api_key_button">キーを暗号化して保存</string>
+    <string name="setup_delete_api_key_button">保存したキーを削除</string>
+    <string name="setup_api_key_saved_message">APIキーを端末内へ暗号化して保存しました。</string>
+    <string name="setup_api_key_deleted_message">保存したAPIキーを削除しました。</string>
+    <string name="setup_api_key_delete_title">保存したAPIキーを削除しますか？</string>
+    <string name="setup_api_key_delete_description">再びAI整形を使うには、APIキーの再入力が必要です。</string>
+    <string name="setup_api_key_delete_confirm">削除する</string>
+    <string name="setup_api_key_delete_failed">保存したAPIキーを削除できませんでした。</string>
+    <string name="action_keep">残す</string>
+    <string name="setup_api_key_invalid_message">APIキーを確認してください。空白・改行を含めず貼り付けてください。</string>
+    <string name="setup_api_key_save_failed">APIキーを安全に保存できませんでした。端末を再起動して、もう一度お試しください。</string>
+    <string name="setup_clipboard_unavailable">クリップボードに貼り付けられる文字がありません。</string>
+    <string name="setup_mode_label">文章モード</string>
+    <string name="setup_model_label">OpenAIモデル（初期値は低コストの gpt-4.1-mini）</string>
+    <string name="setup_model_hint">gpt-4.1-mini</string>
+    <string name="setup_builtin_terms">製品名・技術用語の組み込み辞書を使う</string>
+    <string name="setup_dictionary_label">自分の辞書（1行ずつ「正しい表記=誤表記1,誤表記2」）</string>
+    <string name="setup_dictionary_hint">こえかき=声書き,こえ書き</string>
+    <string name="setup_style_sample_label">好みの文体サンプル（任意・最大2,000文字）</string>
+    <string name="setup_style_sample_hint">普段の文章を貼ると、語尾や雰囲気を参考にします。</string>
+    <string name="setup_save_ai_settings_button">AI整形の設定を保存</string>
+    <string name="setup_ai_settings_saved">AI整形の設定を保存しました。</string>
+    <string name="setup_test_openai_button">OpenAIへの接続をテスト</string>
+    <string name="setup_test_openai_note">接続テストは固定の短い文章を送り、ごく少量のAPI利用が発生します。</string>
+    <string name="setup_test_openai_running">OpenAIへ接続しています…</string>
+    <string name="setup_test_openai_success">接続できました。AI整形を利用できます。</string>
+    <string name="setup_test_openai_key_required">先にAPIキーを保存してください。</string>
+    <string name="setup_test_openai_failed">接続できませんでした：%1$s</string>
+    <string-array name="setup_polish_mode_labels">
+        <item>そのまま（AIを使わない）</item>
+        <item>標準</item>
+        <item>メール</item>
+        <item>チャット・LINE</item>
+        <item>メモ・箇条書き</item>
+        <item>記事・ブログ</item>
+        <item>議事録</item>
+        <item>丁寧に</item>
+        <item>カジュアル</item>
+        <item>英訳</item>
+        <item>和訳</item>
+        <item>AIプロンプト</item>
+    </string-array>
+    <string-array name="setup_polish_mode_ids">
+        <item>raw</item>
+        <item>standard</item>
+        <item>mail</item>
+        <item>chat</item>
+        <item>notes</item>
+        <item>blog</item>
+        <item>minutes</item>
+        <item>polite</item>
+        <item>casual</item>
+        <item>translate_en</item>
+        <item>translate_ja</item>
+        <item>prompt</item>
+    </string-array>
     <string name="setup_test_title">Codex・Claude・LINEで試す</string>
-    <string name="setup_test_description">下の欄をタップし、こえかきで話して入力を確認できます。同じ操作で各アプリの入力欄にも反映できます。</string>
+    <string name="setup_test_description">下の欄をタップし、こえかきで話して入力を確認できます。Codex・Claude・LINEなど、対応する通常の文字入力欄も同じ仕組みで扱います。送信ボタンは自動で押しません。</string>
     <string name="setup_test_hint">ここをタップして、こえかきで話してみてください</string>
-    <string name="setup_privacy_note">入力した文章や音声を、この設定画面が読み取ったり記録したりすることはありません。音声認識には端末の音声認識サービスを使います。</string>
+    <string name="setup_privacy_note">音声認識には端末の音声認識サービスを使います。AI整形がオンのときだけ確定後の文字と設定した辞書・文体をOpenAIへ送ります。APIキーは端末内で暗号化し、こえかき内には音声・文章・応答の履歴を保存しません。</string>
     <string name="setup_status_format">●  %1$s：%2$s</string>
     <string name="setup_status_microphone">マイク</string>
     <string name="setup_status_ime_enabled">こえかきキーボード</string>

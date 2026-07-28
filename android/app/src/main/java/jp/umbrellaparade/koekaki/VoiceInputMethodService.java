@@ -24,18 +24,22 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public final class VoiceInputMethodService extends InputMethodService {
-    private static final String PREFERENCES = "koekaki_settings";
-    private static final String AUTO_RETURN_KEY = "auto_return_keyboard";
     private static final int MAX_TRANSIENT_RETRIES = 3;
     private static final long SEGMENT_RESTART_DELAY_MS = 300L;
     private static final long STOP_RESULT_TIMEOUT_MS = 3_000L;
+    private static final long POLISH_TIMEOUT_MS = 60_000L;
     private static final long IDLE_SESSION_TIMEOUT_MS = 60_000L;
     private static final long MAX_SESSION_DURATION_MS = 10L * 60L * 1_000L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final CommitOnceGate commitOnceGate = new CommitOnceGate();
+    private final RequestEpochGate polishEpochGate = new RequestEpochGate();
+    private final ExecutorService polishExecutor = Executors.newSingleThreadExecutor();
 
     private TextView statusView;
     private ProgressBar volumeView;
@@ -47,6 +51,8 @@ public final class VoiceInputMethodService extends InputMethodService {
     private Runnable stopTimeoutRunnable;
     private Runnable sessionTimeoutRunnable;
     private Runnable idleTimeoutRunnable;
+    private Runnable polishTimeoutRunnable;
+    private Runnable autoReturnRunnable;
     private boolean sessionActive;
     private boolean stopRequested;
     private boolean segmentInFlight;
@@ -54,11 +60,25 @@ public final class VoiceInputMethodService extends InputMethodService {
     private int inputGeneration;
     private int sessionGeneration;
     private int sessionFieldId;
+    private int currentSelectionStart = -1;
+    private int currentSelectionEnd = -1;
+    private int sessionSelectionStart = -1;
+    private int sessionSelectionEnd = -1;
     private String sessionPackageName;
     private InputConnection sessionConnection;
     private String transcript = "";
     private String latestPartial = "";
     private long activeToken;
+    private SessionPhase phase = SessionPhase.IDLE;
+    private volatile OpenAiPolishClient activePolishClient;
+    private Future<?> activePolishFuture;
+
+    private enum SessionPhase {
+        IDLE,
+        LISTENING,
+        STOPPING,
+        POLISHING
+    }
 
     @Override
     public View onCreateInputView() {
@@ -71,14 +91,14 @@ public final class VoiceInputMethodService extends InputMethodService {
         Button settingsButton = root.findViewById(R.id.ime_settings);
 
         speakButton.setOnClickListener(ignored -> {
-            if (sessionActive) requestStop();
+            if (phase == SessionPhase.LISTENING) requestStop();
             else beginSession();
         });
         cancelButton.setOnClickListener(ignored -> cancelSession(true));
         previousKeyboardButton.setOnClickListener(ignored -> switchBackToUsualKeyboard());
         settingsButton.setOnClickListener(ignored -> openSetup());
 
-        updateEditorState();
+        renderPhase();
         return root;
     }
 
@@ -86,6 +106,8 @@ public final class VoiceInputMethodService extends InputMethodService {
     public void onStartInput(EditorInfo attribute, boolean restarting) {
         cancelSession(false);
         inputGeneration += 1;
+        currentSelectionStart = attribute == null ? -1 : attribute.initialSelStart;
+        currentSelectionEnd = attribute == null ? -1 : attribute.initialSelEnd;
         super.onStartInput(attribute, restarting);
     }
 
@@ -105,6 +127,8 @@ public final class VoiceInputMethodService extends InputMethodService {
     public void onFinishInput() {
         cancelSession(false);
         inputGeneration += 1;
+        currentSelectionStart = -1;
+        currentSelectionEnd = -1;
         super.onFinishInput();
     }
 
@@ -112,7 +136,39 @@ public final class VoiceInputMethodService extends InputMethodService {
     public void onUnbindInput() {
         cancelSession(false);
         inputGeneration += 1;
+        currentSelectionStart = -1;
+        currentSelectionEnd = -1;
         super.onUnbindInput();
+    }
+
+    @Override
+    public void onUpdateSelection(
+            int oldSelStart,
+            int oldSelEnd,
+            int newSelStart,
+            int newSelEnd,
+            int candidatesStart,
+            int candidatesEnd) {
+        super.onUpdateSelection(
+                oldSelStart,
+                oldSelEnd,
+                newSelStart,
+                newSelEnd,
+                candidatesStart,
+                candidatesEnd);
+        currentSelectionStart = newSelStart;
+        currentSelectionEnd = newSelEnd;
+        if (!sessionActive) return;
+        if (sessionSelectionStart < 0 || sessionSelectionEnd < 0) {
+            sessionSelectionStart = newSelStart;
+            sessionSelectionEnd = newSelEnd;
+            return;
+        }
+        if (newSelStart != sessionSelectionStart || newSelEnd != sessionSelectionEnd) {
+            cancelSession(false);
+            setStatus(R.string.status_target_changed);
+            updateEditorStateAfterDelay();
+        }
     }
 
     @Override
@@ -130,10 +186,13 @@ public final class VoiceInputMethodService extends InputMethodService {
     public void onDestroy() {
         cancelSession(false);
         handler.removeCallbacksAndMessages(null);
+        polishExecutor.shutdownNow();
         super.onDestroy();
     }
 
     private void beginSession() {
+        if (phase != SessionPhase.IDLE) return;
+        removeAutoReturn();
         EditorInfo editor = getCurrentInputEditorInfo();
         if (!SensitiveFieldPolicy.isSupported(editor)) {
             setStatus(R.string.status_unsupported_field);
@@ -159,6 +218,7 @@ public final class VoiceInputMethodService extends InputMethodService {
         }
 
         sessionActive = true;
+        phase = SessionPhase.LISTENING;
         stopRequested = false;
         segmentInFlight = false;
         transientRetries = 0;
@@ -168,6 +228,8 @@ public final class VoiceInputMethodService extends InputMethodService {
         sessionPackageName = editor.packageName == null ? "" : editor.packageName;
         sessionFieldId = editor.fieldId;
         sessionConnection = connection;
+        sessionSelectionStart = currentSelectionStart;
+        sessionSelectionEnd = currentSelectionEnd;
         commitOnceGate.start(sessionGeneration);
         activeToken += 1;
         long token = activeToken;
@@ -180,7 +242,7 @@ public final class VoiceInputMethodService extends InputMethodService {
             finishWithoutCommit(R.string.status_recognizer_unavailable);
             return;
         }
-        setControlsRecording(true);
+        renderControlsForPhase();
         sessionTimeoutRunnable = () -> {
             if (isCurrentSession(token)) requestStop();
         };
@@ -191,7 +253,11 @@ public final class VoiceInputMethodService extends InputMethodService {
 
     @SuppressLint("MissingPermission")
     private void startSegment(long token) {
-        if (!isCurrentSession(token) || stopRequested || segmentInFlight || recognizer == null) return;
+        if (!isCurrentRecognitionSession(token)
+                || phase != SessionPhase.LISTENING
+                || stopRequested
+                || segmentInFlight
+                || recognizer == null) return;
 
         latestPartial = "";
         setStatus(R.string.status_preparing);
@@ -216,34 +282,36 @@ public final class VoiceInputMethodService extends InputMethodService {
     }
 
     private void requestStop() {
-        if (!sessionActive || stopRequested) return;
+        if (!sessionActive || phase != SessionPhase.LISTENING || stopRequested) return;
+        phase = SessionPhase.STOPPING;
         stopRequested = true;
         removeRestart();
+        renderControlsForPhase();
         setStatus(R.string.status_processing);
         setVolumeVisible(false);
 
         long token = activeToken;
         if (!segmentInFlight || recognizer == null) {
-            finishAndCommit(token, false);
+            finalizeTranscriptForOutput(token, false);
             return;
         }
 
         try {
             recognizer.stopListening();
         } catch (RuntimeException exception) {
-            finishAndCommit(token, true);
+            finalizeTranscriptForOutput(token, true);
             return;
         }
 
         stopTimeoutRunnable = () -> {
-            if (!isCurrentSession(token)) return;
-            finishAndCommit(token, true);
+            if (!isCurrentRecognitionSession(token)) return;
+            finalizeTranscriptForOutput(token, true);
         };
         handler.postDelayed(stopTimeoutRunnable, STOP_RESULT_TIMEOUT_MS);
     }
 
     private void handleRecognitionResult(long token, Bundle results) {
-        if (!isCurrentSession(token)) return;
+        if (!isCurrentRecognitionSession(token)) return;
         segmentInFlight = false;
         removeStopTimeout();
 
@@ -254,7 +322,7 @@ public final class VoiceInputMethodService extends InputMethodService {
         transientRetries = 0;
 
         if (stopRequested) {
-            finishAndCommit(token, false);
+            finalizeTranscriptForOutput(token, false);
         } else {
             resetIdleTimeout(token);
             scheduleRestart(token, SEGMENT_RESTART_DELAY_MS);
@@ -262,12 +330,12 @@ public final class VoiceInputMethodService extends InputMethodService {
     }
 
     private void handleRecognitionError(long token, int error) {
-        if (!isCurrentSession(token)) return;
+        if (!isCurrentRecognitionSession(token)) return;
         segmentInFlight = false;
         removeStopTimeout();
 
         if (stopRequested) {
-            finishAndCommit(token, true);
+            finalizeTranscriptForOutput(token, true);
             return;
         }
 
@@ -293,13 +361,14 @@ public final class VoiceInputMethodService extends InputMethodService {
 
         int message = recognitionErrorMessage(error);
         if (!transcript.trim().isEmpty() || !latestPartial.trim().isEmpty()) {
-            finishAndCommit(token, true, R.string.status_inserted_after_error);
+            finalizeTranscriptForOutput(token, true, R.string.status_inserted_after_error);
         } else {
             finishWithoutCommit(message);
         }
     }
 
     private void scheduleRestart(long token, long delayMillis) {
+        if (!isCurrentRecognitionSession(token) || phase != SessionPhase.LISTENING) return;
         removeRestart();
         setStatus(R.string.status_preparing);
         setVolumeVisible(false);
@@ -307,20 +376,164 @@ public final class VoiceInputMethodService extends InputMethodService {
         handler.postDelayed(restartRunnable, delayMillis);
     }
 
-    private void finishAndCommit(long token, boolean includePartial) {
-        finishAndCommit(token, includePartial, R.string.status_inserted);
+    private void finalizeTranscriptForOutput(long token, boolean includePartial) {
+        finalizeTranscriptForOutput(token, includePartial, R.string.status_inserted);
     }
 
-    private void finishAndCommit(long token, boolean includePartial, int successMessage) {
-        if (!isCurrentSession(token)) return;
+    private void finalizeTranscriptForOutput(
+            long token,
+            boolean includePartial,
+            int successMessage) {
+        if (!isCurrentRecognitionSession(token)) return;
         if (includePartial) transcript = TranscriptAccumulator.append(transcript, latestPartial);
-        String finalText = transcript.trim();
+        String rawText = transcript.trim();
 
-        if (finalText.isEmpty()) {
+        if (rawText.isEmpty()) {
             finishWithoutCommit(R.string.status_no_speech);
             return;
         }
         if (!isOriginalTargetStillActive()) {
+            finishWithoutCommit(R.string.status_target_changed);
+            return;
+        }
+
+        SharedPreferences settings = preferences();
+        String modeId = KoekakiPrompts.findMode(settings.getString(
+                KoekakiSettings.KEY_ACTIVE_MODE_ID,
+                KoekakiSettings.DEFAULT_MODE_ID)).getId();
+        boolean aiEnabled = settings.getBoolean(
+                KoekakiSettings.KEY_AI_POLISH_ENABLED,
+                KoekakiSettings.DEFAULT_AI_POLISH_ENABLED);
+        if (!aiEnabled || KoekakiPrompts.isRawMode(modeId)) {
+            commitTextForSession(token, rawText, successMessage);
+            return;
+        }
+
+        SecureApiKeyStore keyStore = new SecureApiKeyStore(this);
+        if (!keyStore.hasSavedKey()) {
+            commitTextForSession(token, rawText, R.string.status_inserted_without_ai_key);
+            return;
+        }
+
+        String model = settings.getString(
+                KoekakiSettings.KEY_OPENAI_MODEL,
+                KoekakiSettings.DEFAULT_OPENAI_MODEL);
+        String instructions = KoekakiPrompts.buildPolishSystemPrompt(
+                modeId,
+                settings.getString(KoekakiSettings.KEY_USER_DICTIONARY, ""),
+                settings.getString(KoekakiSettings.KEY_STYLE_SAMPLE, ""),
+                settings.getBoolean(
+                        KoekakiSettings.KEY_USE_BUILTIN_TERMS,
+                        KoekakiSettings.DEFAULT_USE_BUILTIN_TERMS));
+        String input = KoekakiPrompts.buildPolishInput(rawText);
+        final OpenAiPolishClient client;
+        try {
+            client = new OpenAiPolishClient(model);
+        } catch (IllegalArgumentException exception) {
+            commitTextForSession(token, rawText, R.string.status_inserted_without_ai);
+            return;
+        }
+
+        sessionSelectionStart = currentSelectionStart;
+        sessionSelectionEnd = currentSelectionEnd;
+        phase = SessionPhase.POLISHING;
+        stopRecognitionKeepTarget();
+        setStatus(R.string.status_ai_polishing);
+        renderControlsForPhase();
+
+        long requestEpoch = polishEpochGate.begin();
+        activePolishClient = client;
+        try {
+            activePolishFuture = polishExecutor.submit(() -> {
+                String polishedText = "";
+                boolean succeeded = false;
+                try {
+                    String apiKey = keyStore.load();
+                    if (apiKey != null) {
+                        polishedText = client.polish(apiKey, instructions, input);
+                        succeeded = !polishedText.trim().isEmpty();
+                    }
+                } catch (SecureApiKeyStore.SecureStoreException
+                         | OpenAiPolishClient.OpenAiException exception) {
+                    // The original transcript remains available for the safe fallback below.
+                } catch (RuntimeException exception) {
+                    // No exception details, transcript, response, or credential are logged.
+                }
+
+                String result = polishedText;
+                boolean requestSucceeded = succeeded;
+                handler.post(() -> handlePolishResult(
+                        token,
+                        requestEpoch,
+                        client,
+                        rawText,
+                        result,
+                        requestSucceeded,
+                        successMessage));
+            });
+            polishTimeoutRunnable = () -> handlePolishTimeout(
+                    token,
+                    requestEpoch,
+                    client,
+                    rawText);
+            handler.postDelayed(polishTimeoutRunnable, POLISH_TIMEOUT_MS);
+        } catch (RuntimeException exception) {
+            polishEpochGate.cancel();
+            activePolishClient = null;
+            commitTextForSession(token, rawText, R.string.status_inserted_without_ai);
+        }
+    }
+
+    private void handlePolishResult(
+            long token,
+            long requestEpoch,
+            OpenAiPolishClient client,
+            String rawText,
+            String polishedText,
+            boolean succeeded,
+            int successMessage) {
+        if (!isCurrentSession(token)
+                || phase != SessionPhase.POLISHING
+                || activePolishClient != client
+                || !polishEpochGate.tryClaim(requestEpoch)) return;
+        removePolishTimeout();
+        activePolishClient = null;
+        activePolishFuture = null;
+
+        if (!isOriginalTargetStillActive()) {
+            finishWithoutCommit(R.string.status_target_changed);
+            return;
+        }
+
+        String output = succeeded ? polishedText.trim() : rawText;
+        int message = succeeded ? successMessage : R.string.status_inserted_without_ai;
+        commitTextForSession(token, output, message);
+    }
+
+    private void handlePolishTimeout(
+            long token,
+            long requestEpoch,
+            OpenAiPolishClient client,
+            String rawText) {
+        polishTimeoutRunnable = null;
+        if (!isCurrentSession(token)
+                || phase != SessionPhase.POLISHING
+                || activePolishClient != client
+                || !polishEpochGate.tryClaim(requestEpoch)) return;
+        activePolishClient = null;
+        client.cancel();
+        Future<?> future = activePolishFuture;
+        activePolishFuture = null;
+        if (future != null) future.cancel(true);
+        if (!isOriginalTargetStillActive()) {
+            finishWithoutCommit(R.string.status_target_changed);
+            return;
+        }
+        commitTextForSession(token, rawText, R.string.status_inserted_without_ai);
+    }
+
+    private void commitTextForSession(long token, String text, int successMessage) {
+        if (!isCurrentSession(token) || !isOriginalTargetStillActive()) {
             finishWithoutCommit(R.string.status_target_changed);
             return;
         }
@@ -330,10 +543,17 @@ public final class VoiceInputMethodService extends InputMethodService {
         }
 
         InputConnection connection = getCurrentInputConnection();
-        boolean committed = connection != null
-                && connection == sessionConnection
-                && connection.commitText(finalText, 1);
-        boolean shouldReturn = committed && preferences().getBoolean(AUTO_RETURN_KEY, false);
+        boolean committed = false;
+        try {
+            committed = connection != null
+                    && connection == sessionConnection
+                    && connection.commitText(text, 1);
+        } catch (RuntimeException ignored) {
+            // A dead editor connection is treated as a changed target and is never retried.
+        }
+        boolean shouldReturn = committed && preferences().getBoolean(
+                KoekakiSettings.KEY_AUTO_RETURN_KEYBOARD,
+                KoekakiSettings.DEFAULT_AUTO_RETURN_KEYBOARD);
         clearSession();
 
         if (!committed) {
@@ -343,7 +563,16 @@ public final class VoiceInputMethodService extends InputMethodService {
         }
 
         setStatus(successMessage);
-        if (shouldReturn) handler.postDelayed(this::switchBackToUsualKeyboard, 250L);
+        if (shouldReturn) {
+            int returnGeneration = inputGeneration;
+            autoReturnRunnable = () -> {
+                autoReturnRunnable = null;
+                if (inputGeneration == returnGeneration && isInputViewShown()) {
+                    switchBackToUsualKeyboard();
+                }
+            };
+            handler.postDelayed(autoReturnRunnable, 250L);
+        }
         else updateEditorStateAfterDelay();
     }
 
@@ -371,6 +600,7 @@ public final class VoiceInputMethodService extends InputMethodService {
 
     private void clearSession() {
         sessionActive = false;
+        phase = SessionPhase.IDLE;
         stopRequested = false;
         segmentInFlight = false;
         transientRetries = 0;
@@ -379,28 +609,52 @@ public final class VoiceInputMethodService extends InputMethodService {
         latestPartial = "";
         sessionPackageName = null;
         sessionConnection = null;
+        sessionSelectionStart = -1;
+        sessionSelectionEnd = -1;
         commitOnceGate.invalidate();
+        polishEpochGate.cancel();
+        OpenAiPolishClient polishClient = activePolishClient;
+        activePolishClient = null;
+        if (polishClient != null) polishClient.cancel();
+        Future<?> polishFuture = activePolishFuture;
+        activePolishFuture = null;
+        if (polishFuture != null) polishFuture.cancel(true);
         removeRestart();
         removeStopTimeout();
         removeSessionTimeout();
         removeIdleTimeout();
+        removePolishTimeout();
+        removeAutoReturn();
+        destroyRecognizer();
+        renderControlsForPhase();
+        setVolumeVisible(false);
+    }
 
+    private void stopRecognitionKeepTarget() {
+        stopRequested = false;
+        segmentInFlight = false;
+        removeRestart();
+        removeStopTimeout();
+        removeSessionTimeout();
+        removeIdleTimeout();
+        destroyRecognizer();
+        setVolumeVisible(false);
+    }
+
+    private void destroyRecognizer() {
         SpeechRecognizer activeRecognizer = recognizer;
         recognizer = null;
-        if (activeRecognizer != null) {
-            try {
-                activeRecognizer.cancel();
-            } catch (RuntimeException ignored) {
-                // The recognizer may already be disconnected. Nothing is persisted.
-            }
-            try {
-                activeRecognizer.destroy();
-            } catch (RuntimeException ignored) {
-                // Some vendor recognizers throw while disconnecting; the session is already invalid.
-            }
+        if (activeRecognizer == null) return;
+        try {
+            activeRecognizer.cancel();
+        } catch (RuntimeException ignored) {
+            // The recognizer may already be disconnected. Nothing is persisted.
         }
-        setControlsRecording(false);
-        setVolumeVisible(false);
+        try {
+            activeRecognizer.destroy();
+        } catch (RuntimeException ignored) {
+            // Some vendor recognizers throw while disconnecting; the session is already invalid.
+        }
     }
 
     private void switchBackToUsualKeyboard() {
@@ -432,16 +686,37 @@ public final class VoiceInputMethodService extends InputMethodService {
         }
     }
 
+    private void renderPhase() {
+        if (statusView == null || speakButton == null) return;
+        renderControlsForPhase();
+        if (phase == SessionPhase.POLISHING) {
+            setStatus(R.string.status_ai_polishing);
+            setVolumeVisible(false);
+        } else if (phase == SessionPhase.STOPPING) {
+            setStatus(R.string.status_processing);
+            setVolumeVisible(false);
+        } else if (phase == SessionPhase.LISTENING) {
+            setStatus(R.string.status_listening);
+            setVolumeVisible(true);
+        } else {
+            updateEditorState();
+        }
+    }
+
     private void updateEditorStateAfterDelay() {
         handler.postDelayed(this::updateEditorState, 1_200L);
     }
 
-    private void setControlsRecording(boolean recording) {
+    private void renderControlsForPhase() {
+        boolean idle = phase == SessionPhase.IDLE;
+        boolean listening = phase == SessionPhase.LISTENING;
         if (speakButton != null) {
-            speakButton.setEnabled(true);
-            speakButton.setText(recording ? R.string.action_stop : R.string.action_speak);
+            speakButton.setText(phase == SessionPhase.POLISHING
+                    ? R.string.action_processing
+                    : idle ? R.string.action_speak : R.string.action_stop);
+            speakButton.setEnabled(idle || listening);
         }
-        if (cancelButton != null) cancelButton.setEnabled(recording);
+        if (cancelButton != null) cancelButton.setEnabled(!idle);
     }
 
     private void setStatus(int resource) {
@@ -462,6 +737,11 @@ public final class VoiceInputMethodService extends InputMethodService {
 
     private boolean isCurrentSession(long token) {
         return sessionActive && token == activeToken;
+    }
+
+    private boolean isCurrentRecognitionSession(long token) {
+        return isCurrentSession(token)
+                && (phase == SessionPhase.LISTENING || phase == SessionPhase.STOPPING);
     }
 
     private void removeRestart() {
@@ -496,13 +776,25 @@ public final class VoiceInputMethodService extends InputMethodService {
         idleTimeoutRunnable = null;
     }
 
+    private void removePolishTimeout() {
+        if (polishTimeoutRunnable == null) return;
+        handler.removeCallbacks(polishTimeoutRunnable);
+        polishTimeoutRunnable = null;
+    }
+
+    private void removeAutoReturn() {
+        if (autoReturnRunnable == null) return;
+        handler.removeCallbacks(autoReturnRunnable);
+        autoReturnRunnable = null;
+    }
+
     private void preserveLatestPartial() {
         transcript = TranscriptAccumulator.append(transcript, latestPartial);
         latestPartial = "";
     }
 
     private SharedPreferences preferences() {
-        return getSharedPreferences(PREFERENCES, MODE_PRIVATE);
+        return getSharedPreferences(KoekakiSettings.PREFERENCES_NAME, MODE_PRIVATE);
     }
 
     private static String firstResult(Bundle results) {
@@ -535,20 +827,22 @@ public final class VoiceInputMethodService extends InputMethodService {
 
         @Override
         public void onReadyForSpeech(Bundle params) {
-            if (!isCurrentSession(token)) return;
+            if (!isCurrentRecognitionSession(token) || phase != SessionPhase.LISTENING) return;
             setStatus(R.string.status_listening);
         }
 
         @Override
         public void onBeginningOfSpeech() {
-            if (!isCurrentSession(token)) return;
+            if (!isCurrentRecognitionSession(token) || phase != SessionPhase.LISTENING) return;
             resetIdleTimeout(token);
             setStatus(R.string.status_listening);
         }
 
         @Override
         public void onRmsChanged(float rmsdB) {
-            if (isCurrentSession(token)) setVolume(rmsdB);
+            if (isCurrentRecognitionSession(token) && phase == SessionPhase.LISTENING) {
+                setVolume(rmsdB);
+            }
         }
 
         @Override
@@ -558,7 +852,7 @@ public final class VoiceInputMethodService extends InputMethodService {
 
         @Override
         public void onEndOfSpeech() {
-            if (!isCurrentSession(token)) return;
+            if (!isCurrentRecognitionSession(token) || phase != SessionPhase.LISTENING) return;
             setStatus(R.string.status_processing);
             setVolumeVisible(false);
         }
@@ -575,7 +869,7 @@ public final class VoiceInputMethodService extends InputMethodService {
 
         @Override
         public void onPartialResults(Bundle partialResults) {
-            if (!isCurrentSession(token)) return;
+            if (!isCurrentRecognitionSession(token)) return;
             latestPartial = firstResult(partialResults);
             if (!latestPartial.isEmpty()) resetIdleTimeout(token);
         }

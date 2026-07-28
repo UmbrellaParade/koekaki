@@ -317,7 +317,7 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 - デスクトップ版ではAPIキーを `safeStorage` で暗号化し、Web版の保存領域と分離
 - スマホ幅（375px）での表示崩れなし、ダーク/ライト両対応
 - **実機（Android）で羅列バグの解消と、APIキー入力の復旧を依頼主が確認済み**
-- Android音声専用IMEのソース、初回設定導線、安全な入力先照合、14件のJVMテスト、APK生成CI
+- Android音声専用IMEのソース、OpenAI AI整形、初回設定導線、安全な入力先照合、40件のJVMテスト、APK生成CI
 
 ### 未確認
 
@@ -480,14 +480,18 @@ electron/
 - [x] password variation / `TYPE_NULL` の無効化、取消・IME非表示・設定移動時の破棄
 - [x] `いつものキーボード`、設定、挿入後の自動復帰、初回チェックリスト
 - [x] GitHub ActionsでJava 17 / Gradle 8.9 / API 35を用意し、テスト・Lint・debug APKをArtifact化
+- [x] OpenAI Responses APIのAI整形、raw＋11モード、組み込み用語、ユーザー辞書、文体サンプル
+- [x] AndroidKeyStoreによるAPIキー暗号化、接続テスト、削除、バックアップ除外
+- [x] AI待機中の入力先再確認、取消・IME切替時の通信停止、失敗時の認識文フォールバック
 - [ ] 依頼主のAndroid実機でAPKをインストールし、Codex / Claude / LINE、Pixel / Samsung、
       Gboard / Samsung Keyboardを確認
-- [ ] 既存Web版のAI整形、辞書、モード、APIキー管理をネイティブIMEへ接続
 
-初版は端末の音声認識結果を直接挿入する技術実証です。Codex / Claudeを名前で許可する実装ではなく、
+Android版はCodex / Claudeを名前で許可する実装ではなく、
 LINEを含む通常の入力欄へ共通経路で挿入します。このPCにはAndroid Studio、JDK、SDK、Gradle、ADBが
 無いため、ローカルAPKビルドはできません。`.github/workflows/android.yml` のCIを使います。
-debug APKの取得と初回設定は `android/README.md` を参照してください。
+debug APKの取得と初回設定は `android/README.md` を参照してください。APIキーの端末内保存は
+単一ユーザーのdebug APK検証用です。一般配布版ではOpenAI公式の安全指針に従い、利用者端末へ
+秘密鍵を置かないバックエンド方式へ移行します。
 
 端末・IMEごとの差と実マイク動作は必ず実機で確認します。確認前に「スマホ版で動作済み」とは言いません。
 

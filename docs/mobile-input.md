@@ -88,9 +88,15 @@ iOSは同等機能の実装対象にせず、現在のPWAで「録音 → 整形
 - 入力先の変更、接続切れ、パスワード欄、`TYPE_NULL` では挿入しない
 - `⌨ いつものキーボード`、設定ボタン、挿入後の自動復帰設定
 - ランチャー画面からマイク許可、IME有効化、IME選択、テスト入力へ進める導線
-- GitHub Actionsで単体テスト、Lint、debug APK生成、14日間のArtifact保存
+- OpenAI Responses APIによるAI整形、raw＋11モード、組み込み用語、ユーザー辞書、文体サンプル
+- APIキーをAPKへ埋め込まず、AndroidKeyStoreのAES-256-GCMで端末内に暗号化保存
+- AI通信中の取消・入力先変更・IME非表示で通信と挿入を破棄し、失敗時は認識文を1回だけ挿入
+- GitHub Actionsで40件の単体テスト、Lint、debug APK生成、14日間のArtifact保存
 
-この初版は端末の音声認識結果を直接挿入する段階です。AI整形、辞書、モード、Web版との
-設定共有は未接続です。このPCにはAndroid Studio / JDK / SDK / Gradleが無いため、ビルドは
-GitHub Actionsで行います。APKのインストール、Codex / Claude / LINEへの挿入、Pixel / Samsung、
-Gboard / Samsung Keyboardでの挙動は、依頼主のAndroid実機で確認するまで未確認です。
+Android版の設定はWeb版とは別保存です。AIへ送るのは確定した認識文と、利用者が設定した
+辞書・文体だけで、音声ファイル、入力先アプリ、周辺文は送りません。端末内のAPIキー保存は
+単一ユーザーのdebug APK検証用であり、一般配布版ではキーを置かないバックエンド方式へ
+移行します。このPCにはAndroid Studio / JDK / SDK / Gradleが無いため、ビルドはGitHub Actionsで
+行います。APKのインストール、APIキー保存と実通信、Codex / Claude / LINEへの挿入、
+Pixel / Samsung、Gboard / Samsung Keyboardでの挙動は、依頼主のAndroid実機で確認するまで
+未確認です。
