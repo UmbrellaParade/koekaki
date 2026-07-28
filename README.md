@@ -132,6 +132,19 @@ npm run test:hotkey
 この自己テストは `SendInput` で右 Alt の押下・キーリピート・解放を再現し、
 低レベルキーボードフックが1回のトグルとして検出できることを確認します。
 
+Electron からフックを起動して受信できることまで確認する場合:
+
+```bash
+npm run test:electron-hotkey
+```
+
+このPCのApplication ControlがElectron付属のZIP展開モジュールを拒否する場合は、
+次を一度実行します。公式配布ZIPのSHA-256を照合し、Windows標準機能で展開します。
+
+```bash
+npm run install:electron-binary
+```
+
 独自ドメインのルートに配置する場合は、`base` を変えてビルドします。
 
 ```bash

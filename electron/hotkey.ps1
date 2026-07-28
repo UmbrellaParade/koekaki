@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$SelfTest,
-    [switch]$NoSuppress
+    [switch]$NoSuppress,
+    [int]$ParentPid = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $source = @'
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -40,8 +42,9 @@ namespace Koekaki.Desktop
         private static int selfTestObserved;
         private static int selfTestFinished;
         private static int exitCode;
+        private static int parentProcessId;
 
-        public static int Run(bool runSelfTest, bool suppressRightAlt)
+        public static int Run(bool runSelfTest, bool suppressRightAlt, int watchedParentPid)
         {
             selfTest = runSelfTest;
             suppress = suppressRightAlt;
@@ -50,6 +53,7 @@ namespace Koekaki.Desktop
             selfTestObserved = 0;
             selfTestFinished = 0;
             exitCode = runSelfTest ? 1 : 0;
+            parentProcessId = watchedParentPid;
             ownerThreadId = GetCurrentThreadId();
             callback = HookCallback;
 
@@ -74,6 +78,14 @@ namespace Koekaki.Desktop
                 testThread.IsBackground = true;
                 testThread.Name = "KoekakiRightAltSelfTest";
                 testThread.Start();
+            }
+
+            if (parentProcessId > 0)
+            {
+                Thread parentThread = new Thread(ParentWatchWorker);
+                parentThread.IsBackground = true;
+                parentThread.Name = "KoekakiParentWatch";
+                parentThread.Start();
             }
 
             try
@@ -186,12 +198,39 @@ namespace Koekaki.Desktop
             if (sent != inputs.Length)
             {
                 int error = Marshal.GetLastWin32Error();
+                if (sent > 0)
+                {
+                    INPUT[] release = new INPUT[1];
+                    release[0].type = INPUT_KEYBOARD;
+                    release[0].U.ki.wVk = (ushort)VK_RMENU;
+                    release[0].U.ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+                    SendInput(1, release, Marshal.SizeOf(typeof(INPUT)));
+                }
                 FinishSelfTest(false, "SELF_TEST_SEND_FAILED " + error);
                 return;
             }
 
             Thread.Sleep(3000);
             FinishSelfTest(false, "SELF_TEST_TIMEOUT");
+        }
+
+        private static void ParentWatchWorker()
+        {
+            try
+            {
+                using (Process parent = Process.GetProcessById(parentProcessId))
+                {
+                    parent.WaitForExit();
+                }
+            }
+            catch (ArgumentException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            PostThreadMessage(ownerThreadId, WM_QUIT, UIntPtr.Zero, IntPtr.Zero);
         }
 
         private static void FinishSelfTest(bool success, string message)
@@ -379,7 +418,8 @@ try {
     Add-Type -TypeDefinition $source -Language CSharp
     $exitCode = [Koekaki.Desktop.RightAltHook]::Run(
         $SelfTest.IsPresent,
-        -not $NoSuppress.IsPresent
+        -not $NoSuppress.IsPresent,
+        $ParentPid
     )
     exit $exitCode
 }

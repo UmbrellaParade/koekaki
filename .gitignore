@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-ssr/
+dist-electron/
+dist-desktop/
 .DS_Store
 *.local
 *.log

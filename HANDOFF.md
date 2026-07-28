@@ -84,7 +84,8 @@ src/
 scripts/
 ├── make-icons.ps1           PWA アイコン生成
 ├── test-rule-polish.ts      ルール整形の回帰テスト（18件）
-└── test-webspeech.ts        音声認識の回帰テスト（8件）
+├── test-webspeech.ts        音声認識の回帰テスト（8件）
+└── test-hotkey-protocol.ts  ホットキー行プロトコルのテスト（5件）
 ```
 
 ### コマンド
@@ -93,7 +94,7 @@ scripts/
 npm install
 npm run dev      # http://localhost:5173/koekaki/  ← 末尾の /koekaki/ が必要
 npm run build
-npm test         # 26件
+npm test         # 31件（Web回帰26 + ホットキープロトコル5）
 ```
 
 `npm test` は Node の型ストリップ（`--experimental-strip-types`）で TS を直接実行します。この制約から:
@@ -296,7 +297,7 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 - PWA（manifest / Service Worker / アイコン / インストール可能）
 - 3社の API 疎通（公開URLからの CORS、認証エラーの取り回し）
 - 録音 → 16kHz WAV 変換（合成音声で実ブラウザ検証）
-- 回帰テスト26件（ルール整形18 + 音声認識8）
+- 回帰テスト31件（ルール整形18 + 音声認識8 + ホットキープロトコル5）
 - スマホ幅（375px）での表示崩れなし、ダーク/ライト両対応
 - **実機（Android）で羅列バグの解消と、APIキー入力の復旧を依頼主が確認済み**
 
@@ -308,7 +309,7 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 
 ### 依頼主から出ている要望
 
-1. **デスクトップ常駐版（最優先・未着手）** — 第8章
+1. **デスクトップ常駐版（最優先・段階2まで実装済み）** — 第8章
 2. Web 検索モード（「調べる」）— 未着手。OpenAI / Gemini とも検索ツールがあり実装は可能
 3. 英語 UI — 未着手
 
@@ -317,6 +318,19 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 ## 8. 次のタスク：デスクトップ常駐版
 
 依頼主が一番望んでいる機能です。**Typeless とほぼ同じものを、というのが要望。**
+
+### 現在の進捗
+
+- [x] `hotkey.ps1` 単体で右 Alt を検出し、合成入力で自己テスト
+- [x] Electron からフックを起動し、右 Alt のトグルを受信
+- [ ] トレイ常駐 + 録音 + 既存 `src/lib` で整形してクリップボードへ
+- [ ] Ctrl+V の送出でカーソル位置へ挿入
+- [ ] 参考画像に合わせてボイスバーを仕上げる
+
+段階2では、親Electronが異常終了した場合にPowerShell側もフックを解除して終了する監視、
+AltGr等で困ったときの「ホットキーを一時停止」、CRLF・分割チャンク対応の受信処理まで実装済みです。
+このPCではApplication ControlがElectron付属のZIP展開モジュールを拒否するため、
+`npm run install:electron-binary` で公式ZIPのSHA-256を照合してWindows標準機能で展開します。
 
 ### 再現対象（公式ドキュメントで確認済み）
 
@@ -351,9 +365,9 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 
 ```
 electron/
-├── main.ts         トレイ常駐、ウィンドウ管理、ホットキー受信、
+├── main.mts        トレイ常駐、ウィンドウ管理、ホットキー受信、
 │                   クリップボード、貼り付け指示
-├── preload.ts      レンダラへの橋渡し
+├── preload.cts     レンダラへの橋渡し
 ├── hotkey.ps1      C# の WH_KEYBOARD_LL フック。右Alt検出を stdout に出力。
 │                   SendInput で Ctrl+V も送る（ASCII で書くこと。6-11 参照）
 └── renderer/       録音 + 既存の src/lib をそのまま利用

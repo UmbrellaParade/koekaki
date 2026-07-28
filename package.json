@@ -3,13 +3,18 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "dist-electron/main.mjs",
   "description": "こえかき — 話すだけで、整った文章に。AI音声入力ツール",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types scripts/test-rule-polish.ts && node --experimental-strip-types scripts/test-webspeech.ts",
+    "test": "node --experimental-strip-types scripts/test-rule-polish.ts && node --experimental-strip-types scripts/test-webspeech.ts && node --experimental-strip-types scripts/test-hotkey-protocol.ts",
     "test:hotkey": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File electron/hotkey.ps1 -SelfTest",
+    "test:electron-hotkey": "npm run build:electron && electron . --hotkey-self-test",
+    "install:electron-binary": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-electron.ps1",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "desktop": "npm run build:electron && electron .",
     "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false"
   },
   "dependencies": {
@@ -17,9 +22,11 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@types/node": "24.13.3",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.1",
+    "electron": "43.2.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vite-plugin-pwa": "^1.0.0"

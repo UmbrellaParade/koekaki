@@ -8,7 +8,7 @@ Codex が作ったものを引き渡す前、および第三者が点検する�
 
 ## A. 壊していないか（毎回必ず）
 
-- [ ] `npm test` が通る（26件。増えているのは可、減っているのは要説明）
+- [ ] `npm test` が通る（31件。増えているのは可、減っているのは要説明）
 - [ ] `npm run build` が通る
 - [ ] `npm run dev` で `http://localhost:5173/koekaki/` が開く
 - [ ] GitHub Actions のデプロイが成功している
