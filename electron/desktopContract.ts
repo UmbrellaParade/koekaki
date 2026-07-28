@@ -16,6 +16,7 @@ export const DESKTOP_CHANNELS = {
   state: 'koekaki:renderer-state',
   error: 'koekaki:renderer-error',
   completeDictation: 'koekaki:complete-dictation',
+  readApiKeyClipboard: 'koekaki:read-api-key-clipboard',
   writeClipboard: 'koekaki:write-clipboard',
   loadApiKeys: 'koekaki:load-api-keys',
   saveApiKeys: 'koekaki:save-api-keys',

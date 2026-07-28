@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { AUDIO_PRICES, TEXT_PRICES } from '../lib/cost'
+import { resolveEnginePatchAfterApiKeySave } from '../lib/apiKeySettings'
 import { testProviderKey } from '../lib/pipeline'
 import { anthropicListModels } from '../lib/providers/anthropic'
 import { geminiListModels } from '../lib/providers/gemini'
@@ -17,11 +18,25 @@ import { Segmented, Sheet, SwitchRow } from './Sheet'
 
 interface SettingsSheetProps {
   settings: Settings
-  onChange: (patch: Partial<Settings>) => void
+  onChange: (patch: Partial<Settings>) => Promise<void>
+  apiKeySaveState: 'idle' | 'saving' | 'saved' | 'error'
+  apiKeysLoaded: boolean
+  getSettingsForConnectionTest: () => Promise<Settings | null>
   onClose: () => void
   onClearHistory: () => void
   onNotify: (kind: 'ok' | 'err', message: string, hint?: string) => void
   diagnostics: SpeechDiagnostic[]
+}
+
+async function readClipboardText(): Promise<string> {
+  const desktop = window.koekakiDesktop
+  return desktop ? desktop.readApiKeyClipboard() : navigator.clipboard.readText()
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  const desktop = window.koekakiDesktop
+  if (desktop) await desktop.writeClipboard(text)
+  else await navigator.clipboard.writeText(text)
 }
 
 /**
@@ -85,6 +100,9 @@ const LANGS: Array<{ value: string; label: string }> = [
 export function SettingsSheet({
   settings,
   onChange,
+  apiKeySaveState,
+  apiKeysLoaded,
+  getSettingsForConnectionTest,
   onClose,
   onClearHistory,
   onNotify,
@@ -99,7 +117,7 @@ export function SettingsSheet({
       ...diagnostics.map((d) => `[${d.kind}] ${d.detail}`),
     ].join('\n')
     try {
-      await navigator.clipboard.writeText(body)
+      await writeClipboardText(body)
       onNotify('ok', '診断ログをコピーしました', 'そのまま貼り付けて共有できます')
     } catch {
       onNotify('err', 'コピーできませんでした')
@@ -108,6 +126,15 @@ export function SettingsSheet({
 
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [testing, setTesting] = useState<ProviderId | null>(null)
+  const [pasting, setPasting] = useState<ProviderId | null>(null)
+  const [pendingKeySaves, setPendingKeySaves] = useState(0)
+  const keyActionBusyRef = useRef(false)
+  const pendingKeySavesRef = useRef(0)
+  const latestSettingsRef = useRef(settings)
+  latestSettingsRef.current = settings
+  const keyActionBusy = testing !== null || pasting !== null
+  const keyControlBusy =
+    !apiKeysLoaded || keyActionBusy || pendingKeySaves > 0 || apiKeySaveState === 'saving'
   const webSpeechOk = isWebSpeechSupported()
   /** 文字起こしと整形が同じ Gemini モデルなら、1リクエストで済む経路に乗る */
   const geminiFastPath = settings.models.geminiTranscribe === settings.models.geminiPolish
@@ -116,14 +143,26 @@ export function SettingsSheet({
   const openaiPreset = settings.transcribeEngine === 'openai' && settings.polishEngine === 'openai'
 
   const testKey = async (provider: ProviderId) => {
+    if (
+      !apiKeysLoaded ||
+      keyActionBusyRef.current ||
+      pendingKeySavesRef.current > 0 ||
+      apiKeySaveState === 'saving'
+    ) {
+      return
+    }
+    keyActionBusyRef.current = true
     setTesting(provider)
     try {
-      await testProviderKey(provider, settings)
+      const persistedSettings = await getSettingsForConnectionTest()
+      if (!persistedSettings) return
+      await testProviderKey(provider, persistedSettings)
       onNotify('ok', `${KEY_INFO[provider].label} につながりました`)
     } catch (err) {
       if (err instanceof ApiError) onNotify('err', err.message, err.hint)
       else onNotify('err', '接続できませんでした')
     } finally {
+      keyActionBusyRef.current = false
       setTesting(null)
     }
   }
@@ -133,47 +172,83 @@ export function SettingsSheet({
    * このとき、いま選んでいるエンジンがキー未設定の provider を指したままだと
    * 「キーを入れたのにまだ使えない」状態になるので、入れた provider に向け直す。
    */
-  const setKey = (provider: ProviderId, value: string) => {
+  const setKey = async (provider: ProviderId, value: string): Promise<boolean> => {
     // API キーに空白や改行は含まれない。貼り付け時に紛れ込むことが多いので落とす。
     const trimmed = value.replace(/\s+/g, '')
     const nextKeys = { ...settings.apiKeys, [provider]: trimmed }
-    const patch: Partial<Settings> = { apiKeys: nextKeys }
+    const transcribeEngineAtStart = settings.transcribeEngine
+    const polishEngineAtStart = settings.polishEngine
+    pendingKeySavesRef.current += 1
+    setPendingKeySaves(pendingKeySavesRef.current)
+    try {
+      try {
+        await onChange({ apiKeys: nextKeys })
+      } catch {
+        return false
+      }
 
-    const engineProviderHasKey = (engine: string) =>
-      engine === 'webspeech' || engine === 'rules' || engine === 'none'
-        ? true
-        : Boolean(nextKeys[engine as ProviderId]?.trim())
-
-    if (trimmed && !engineProviderHasKey(settings.transcribeEngine) && provider !== 'anthropic') {
-      patch.transcribeEngine = provider as TranscribeEngine
+      const latestSettings = latestSettingsRef.current
+      const enginePatch = resolveEnginePatchAfterApiKeySave(
+        provider,
+        Boolean(trimmed),
+        { transcribeEngine: transcribeEngineAtStart, polishEngine: polishEngineAtStart },
+        latestSettings,
+      )
+      if (enginePatch.transcribeEngine !== undefined || enginePatch.polishEngine !== undefined) {
+        await onChange(enginePatch)
+      }
+      return true
+    } finally {
+      pendingKeySavesRef.current = Math.max(0, pendingKeySavesRef.current - 1)
+      setPendingKeySaves(pendingKeySavesRef.current)
     }
-    if (trimmed && !engineProviderHasKey(settings.polishEngine)) {
-      patch.polishEngine = provider as PolishEngine
-    }
-    onChange(patch)
   }
 
-  /** スマホでは長押しの貼り付けが当てにくいので、ボタンから直接読み込めるようにする */
+  /** ボタン操作のときだけ、各環境に合った安全な経路でクリップボードを読む。 */
   const pasteKey = async (provider: ProviderId) => {
+    if (
+      !apiKeysLoaded ||
+      keyActionBusyRef.current ||
+      pendingKeySavesRef.current > 0 ||
+      apiKeySaveState === 'saving'
+    ) {
+      return
+    }
+    keyActionBusyRef.current = true
+    setPasting(provider)
     try {
-      const text = await navigator.clipboard.readText()
+      let text: string
+      try {
+        text = await readClipboardText()
+      } catch {
+        onNotify(
+          'err',
+          '貼り付けできませんでした',
+          window.koekakiDesktop
+            ? '入力欄を選び、Ctrl+V で貼り付けてください。'
+            : '入力欄を長押しして手動で貼り付けてください。',
+        )
+        return
+      }
       if (!text.trim()) {
         onNotify('err', 'クリップボードが空です')
         return
       }
-      setKey(provider, text)
+      if (!(await setKey(provider, text))) return
       onNotify('ok', `${KEY_INFO[provider].label} のキーを貼り付けました`, '「接続テスト」で確認できます')
-    } catch {
-      onNotify('err', '貼り付けできませんでした', '入力欄を長押しして手動で貼り付けてください。')
+    } finally {
+      keyActionBusyRef.current = false
+      setPasting(null)
     }
   }
 
-  const setModel = (key: keyof Settings['models'], value: string) =>
-    onChange({ models: { ...settings.models, [key]: value } })
+  const setModel = (key: keyof Settings['models'], value: string) => {
+    void onChange({ models: { ...settings.models, [key]: value } })
+  }
 
   const handleExport = async () => {
     try {
-      await navigator.clipboard.writeText(exportSettings(settings))
+      await writeClipboardText(exportSettings(settings))
       onNotify('ok', '設定をコピーしました', 'APIキーは含まれません')
     } catch {
       onNotify('err', 'コピーできませんでした')
@@ -181,10 +256,12 @@ export function SettingsSheet({
   }
 
   const handleImport = () => {
+    if (keyActionBusyRef.current || pendingKeySavesRef.current > 0 || apiKeySaveState === 'saving') return
     const json = window.prompt('エクスポートした設定 JSON を貼り付けてください')
     if (!json) return
     try {
-      onChange(importSettings(json, settings))
+      const { apiKeys: _apiKeys, ...importedSettings } = importSettings(json, settings)
+      void onChange(importedSettings)
       onNotify('ok', '設定を読み込みました')
     } catch {
       onNotify('err', '設定の形式が正しくありません')
@@ -199,10 +276,18 @@ export function SettingsSheet({
         <div className="notice">
           <AlertIcon className="ico" />
           <div>
-            キーはこの端末のブラウザ内にだけ保存され、こえかきのサーバーには送られません（そもそもサーバーがありません）。
+            {window.koekakiDesktop
+              ? 'キーはこのPCの暗号化された保存領域にだけ保存され、こえかきのサーバーには送られません（そもそもサーバーがありません）。'
+              : 'キーはこの端末のブラウザ内にだけ保存され、こえかきのサーバーには送られません（そもそもサーバーがありません）。'}
             音声とテキストは、あなたのキーで各AI社に直接送信されます。
           </div>
         </div>
+        {!apiKeysLoaded && window.koekakiDesktop && (
+          <div className="notice" style={{ marginTop: 8 }}>
+            <LoaderIcon size={16} className="spin" />
+            <div>保存済みのAPIキーを読み込んでいます…</div>
+          </div>
+        )}
 
         {(Object.keys(KEY_INFO) as ProviderId[]).map((provider) => {
           const info = KEY_INFO[provider]
@@ -223,7 +308,10 @@ export function SettingsSheet({
                   type="text"
                   inputMode="text"
                   value={settings.apiKeys[provider]}
-                  onChange={(e) => setKey(provider, e.target.value)}
+                  onChange={(e) => {
+                    if (!keyActionBusyRef.current) void setKey(provider, e.target.value)
+                  }}
+                  disabled={!apiKeysLoaded || keyActionBusy}
                   onFocus={(e) => {
                     // キーボードが出ると入力欄が隠れることがあるので、見える位置へ寄せる
                     setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 250)
@@ -247,16 +335,41 @@ export function SettingsSheet({
               </div>
 
               <div className="row" style={{ marginTop: 6, flexWrap: 'wrap', gap: 6 }}>
-                <button className="btn sm" onClick={() => void pasteKey(provider)}>
-                  貼り付け
+                <button className="btn sm" onClick={() => void pasteKey(provider)} disabled={keyControlBusy}>
+                  {pasting === provider && <LoaderIcon size={14} className="spin" />}
+                  {pasting === provider ? '貼り付け中…' : '貼り付け'}
                 </button>
                 {settings.apiKeys[provider] && (
                   <>
-                    <span style={{ fontSize: 12, color: 'var(--ok)' }}>
-                      {settings.apiKeys[provider].length} 文字 保存済み（末尾 …
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color:
+                          apiKeySaveState === 'error'
+                            ? 'var(--danger)'
+                            : apiKeySaveState === 'saving'
+                              ? 'var(--warn)'
+                              : 'var(--ok)',
+                      }}
+                    >
+                      {settings.apiKeys[provider].length} 文字{' '}
+                      {apiKeySaveState === 'saving'
+                        ? '保存中…'
+                        : apiKeySaveState === 'error'
+                          ? '保存失敗'
+                          : '保存済み'}
+                      （末尾 …
                       {settings.apiKeys[provider].slice(-4)}）
                     </span>
-                    <button className="btn danger sm" onClick={() => setKey(provider, '')}>
+                    <button
+                      className="btn danger sm"
+                      onClick={() => {
+                        if (!keyActionBusyRef.current && pendingKeySavesRef.current === 0) {
+                          void setKey(provider, '')
+                        }
+                      }}
+                      disabled={keyControlBusy}
+                    >
                       消す
                     </button>
                   </>
@@ -266,7 +379,7 @@ export function SettingsSheet({
                 <button
                   className="btn sm"
                   onClick={() => void testKey(provider)}
-                  disabled={!settings.apiKeys[provider] || testing !== null}
+                  disabled={!settings.apiKeys[provider] || keyControlBusy}
                 >
                   {testing === provider && <LoaderIcon size={14} className="spin" />}
                   {testing === provider ? '確認中…' : '接続テスト'}
@@ -597,7 +710,7 @@ export function SettingsSheet({
           <button className="btn sm" onClick={handleExport}>
             設定をコピー（バックアップ）
           </button>
-          <button className="btn sm" onClick={handleImport}>
+          <button className="btn sm" onClick={handleImport} disabled={keyControlBusy}>
             設定を貼り付けて復元
           </button>
           <button className="btn danger sm" onClick={onClearHistory}>

@@ -16,12 +16,29 @@ import {
   VOICE_BAR_APP_URL,
 } from '../electron/desktopContract.ts'
 import { compactDesktopMessage, decideDesktopCommand } from '../src/lib/desktopFlow.ts'
+import { resolveEnginePatchAfterApiKeySave } from '../src/lib/apiKeySettings.ts'
+import {
+  createSerialTaskQueue,
+  enqueueSerialTask,
+  waitForSerialTasks,
+} from '../src/lib/serialQueue.ts'
 
 let passed = 0
 
 function test(name: string, fn: () => void) {
   try {
     fn()
+    passed += 1
+    console.log(`  OK   ${name}`)
+  } catch (error) {
+    console.error(`  NG   ${name}`)
+    throw error
+  }
+}
+
+async function testAsync(name: string, fn: () => Promise<void>) {
+  try {
+    await fn()
     passed += 1
     console.log(`  OK   ${name}`)
   } catch (error) {
@@ -121,6 +138,38 @@ test('APIキー設定は3項目だけを上限付きで受け付ける', () => {
   assert.equal(parseApiKeys({ ...keys, gemini: 'bad\0value' }), null)
 })
 
+test('保存後もエンジン未設定なら入力したproviderへ切り替える', () => {
+  assert.deepEqual(
+    resolveEnginePatchAfterApiKeySave(
+      'openai',
+      true,
+      { transcribeEngine: 'gemini', polishEngine: 'gemini' },
+      {
+        apiKeys: { gemini: '', openai: 'saved-openai-key', anthropic: '' },
+        transcribeEngine: 'gemini',
+        polishEngine: 'gemini',
+      },
+    ),
+    { transcribeEngine: 'openai', polishEngine: 'openai' },
+  )
+})
+
+test('保存待ち中に手動変更したエンジンを自動切替で上書きしない', () => {
+  assert.deepEqual(
+    resolveEnginePatchAfterApiKeySave(
+      'openai',
+      true,
+      { transcribeEngine: 'gemini', polishEngine: 'gemini' },
+      {
+        apiKeys: { gemini: '', openai: 'saved-openai-key', anthropic: '' },
+        transcribeEngine: 'gemini',
+        polishEngine: 'anthropic',
+      },
+    ),
+    { transcribeEngine: 'openai' },
+  )
+})
+
 test('APIキー取得ページは許可したHTTPS originだけを開く', () => {
   assert.equal(isAllowedExternalUrl('https://platform.openai.com/api-keys'), true)
   assert.equal(isAllowedExternalUrl('https://aistudio.google.com/apikey'), true)
@@ -176,6 +225,21 @@ test('録音バーURLは専用surfaceだけを許可する', () => {
     ),
     false,
   )
+})
+
+await testAsync('APIキー保存が1回失敗しても次の保存と待機列を止めない', async () => {
+  const queue = createSerialTaskQueue()
+  const steps: string[] = []
+  const failed = enqueueSerialTask(queue, async () => {
+    steps.push('failed')
+    throw new Error('expected save failure')
+  })
+  await assert.rejects(failed)
+  await enqueueSerialTask(queue, async () => {
+    steps.push('recovered')
+  })
+  await waitForSerialTasks(queue)
+  assert.deepEqual(steps, ['failed', 'recovered'])
 })
 
 console.log(`\n全 ${passed} 件 通過`)

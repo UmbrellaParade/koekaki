@@ -16,6 +16,7 @@ import { processRecording } from './lib/pipeline'
 import { allModes, findMode } from './lib/prompts'
 import { WebSpeechTranscriber, type SpeechDiagnostic } from './lib/providers/webspeech'
 import { Recorder } from './lib/recorder'
+import { createSerialTaskQueue, enqueueSerialTask, waitForSerialTasks } from './lib/serialQueue'
 import { loadSettings, saveSettings } from './lib/storage'
 import type { HistoryItem, Mode, Settings } from './lib/types'
 import { ApiError } from './lib/types'
@@ -48,15 +49,22 @@ export default function App() {
   )
   const [editingMode, setEditingMode] = useState<Mode | null | undefined>(undefined)
   const [desktopKeysLoaded, setDesktopKeysLoaded] = useState(() => !desktop)
+  const [apiKeySaveState, setApiKeySaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>(() =>
+    desktop ? 'idle' : 'saved',
+  )
 
   const recorderRef = useRef<Recorder | null>(null)
   const speechRef = useRef<WebSpeechTranscriber | null>(null)
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
   const startedAtRef = useRef(0)
   const spaceHeldRef = useRef(false)
   const phaseRef = useRef<Phase>('idle')
   const desktopRequestIdRef = useRef<string | null>(null)
   const desktopReadyReportedRef = useRef(false)
-  const apiKeySaveQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const apiKeySaveQueueRef = useRef(createSerialTaskQueue())
+  const apiKeySaveVersionRef = useRef(0)
+  const lastPersistedApiKeysRef = useRef<Settings['apiKeys']>({ ...settings.apiKeys })
   /** 追記モードで直前の結果につなぐために、最新の結果を参照できるようにしておく */
   const resultRef = useRef<Result | null>(null)
   resultRef.current = result
@@ -93,24 +101,56 @@ export default function App() {
   )
 
   const patch = useCallback(
-    (p: Partial<Settings>) => {
+    (p: Partial<Settings>): Promise<void> => {
+      let persistence = Promise.resolve()
       if (desktop && p.apiKeys) {
         const apiKeys = p.apiKeys
-        apiKeySaveQueueRef.current = apiKeySaveQueueRef.current
-          .catch(() => undefined)
-          .then(() => desktop.saveApiKeys(apiKeys))
-        void apiKeySaveQueueRef.current.catch(() => {
-          push('err', 'API キーを保存できませんでした', 'もう一度貼り付けてください。')
-        })
+        const saveVersion = apiKeySaveVersionRef.current + 1
+        apiKeySaveVersionRef.current = saveVersion
+        setApiKeySaveState('saving')
+        persistence = enqueueSerialTask(apiKeySaveQueueRef.current, () => desktop.saveApiKeys(apiKeys))
+        void persistence.then(
+          () => {
+            lastPersistedApiKeysRef.current = { ...apiKeys }
+            if (apiKeySaveVersionRef.current === saveVersion) setApiKeySaveState('saved')
+          },
+          () => {
+            if (apiKeySaveVersionRef.current === saveVersion) {
+              setApiKeySaveState('error')
+              setSettings((prev) => {
+                const restored: Settings = { ...prev, apiKeys: { ...lastPersistedApiKeysRef.current } }
+                settingsRef.current = restored
+                saveSettings(restored)
+                return restored
+              })
+              push('err', 'API キーを保存できませんでした', '前の保存内容に戻しました。もう一度貼り付けてください。')
+            }
+          },
+        )
+      } else if (p.apiKeys) {
+        setApiKeySaveState('saved')
       }
       setSettings((prev) => {
         const next = { ...prev, ...p }
+        settingsRef.current = next
         saveSettings(next)
         return next
       })
+      return persistence
     },
     [desktop, push],
   )
+
+  const getSettingsForConnectionTest = useCallback(async (): Promise<Settings | null> => {
+    try {
+      await waitForSerialTasks(apiKeySaveQueueRef.current)
+      if (!desktop) return settingsRef.current
+      const apiKeys = await desktop.loadApiKeys()
+      return { ...settingsRef.current, apiKeys }
+    } catch {
+      return null
+    }
+  }, [desktop])
 
   // ---- テーマ ----
   useEffect(() => {
@@ -140,13 +180,25 @@ export default function App() {
   useEffect(() => {
     if (!desktop) return
     let active = true
+    const loadVersion = apiKeySaveVersionRef.current
     void desktop
       .loadApiKeys()
       .then((apiKeys) => {
-        if (active) setSettings((prev) => ({ ...prev, apiKeys }))
+        if (active && apiKeySaveVersionRef.current === loadVersion) {
+          lastPersistedApiKeysRef.current = { ...apiKeys }
+          setSettings((prev) => {
+            const next = { ...prev, apiKeys }
+            settingsRef.current = next
+            return next
+          })
+          setApiKeySaveState('saved')
+        }
       })
       .catch(() => {
-        if (active) push('err', 'API キーを読み込めませんでした', '設定画面で保存し直してください。')
+        if (active && apiKeySaveVersionRef.current === loadVersion) {
+          setApiKeySaveState('error')
+          push('err', 'API キーを読み込めませんでした', '設定画面で保存し直してください。')
+        }
       })
       .finally(() => {
         if (active) setDesktopKeysLoaded(true)
@@ -762,6 +814,9 @@ export default function App() {
         <SettingsSheet
           settings={settings}
           onChange={patch}
+          apiKeySaveState={apiKeySaveState}
+          apiKeysLoaded={desktopKeysLoaded}
+          getSettingsForConnectionTest={getSettingsForConnectionTest}
           onClose={() => setSheet('none')}
           onClearHistory={handleClearHistory}
           onNotify={push}

@@ -29,6 +29,7 @@ interface KoekakiDesktopBridge {
   reportState(state: { phase: KoekakiDesktopPhase; requestId?: string }): void
   reportError(error: { message: string; hint?: string; requestId?: string }): void
   completeDictation(result: { requestId: string; text: string }): Promise<void>
+  readApiKeyClipboard(): Promise<string>
   writeClipboard(text: string): Promise<void>
   loadApiKeys(): Promise<KoekakiDesktopApiKeys>
   saveApiKeys(keys: KoekakiDesktopApiKeys): Promise<void>

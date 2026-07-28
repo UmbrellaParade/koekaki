@@ -12,6 +12,7 @@ const channels = {
   state: 'koekaki:renderer-state',
   error: 'koekaki:renderer-error',
   completeDictation: 'koekaki:complete-dictation',
+  readApiKeyClipboard: 'koekaki:read-api-key-clipboard',
   writeClipboard: 'koekaki:write-clipboard',
   loadApiKeys: 'koekaki:load-api-keys',
   saveApiKeys: 'koekaki:save-api-keys',
@@ -54,6 +55,7 @@ contextBridge.exposeInMainWorld('koekakiDesktop', {
     ipcRenderer.send(channels.error, payload),
   completeDictation: (payload: { requestId: string; text: string }): Promise<void> =>
     ipcRenderer.invoke(channels.completeDictation, payload),
+  readApiKeyClipboard: (): Promise<string> => ipcRenderer.invoke(channels.readApiKeyClipboard),
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke(channels.writeClipboard, text),
   loadApiKeys: (): Promise<ApiKeys> => ipcRenderer.invoke(channels.loadApiKeys),
   saveApiKeys: (keys: ApiKeys): Promise<void> => ipcRenderer.invoke(channels.saveApiKeys, keys),

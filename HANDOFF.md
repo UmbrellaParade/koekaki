@@ -87,7 +87,7 @@ scripts/
 ├── test-webspeech.ts        音声認識の回帰テスト（18件）
 ├── test-hotkey-protocol.ts  ホットキー行プロトコルのテスト（5件）
 ├── test-paste-protocol.ts   貼り付け対象・固定status・改行プロトコルのテスト（10件）
-└── test-desktop.ts          デスクトップの状態・IPC・URL・録音バー検証（18件）
+└── test-desktop.ts          デスクトップの状態・IPC・URL・録音バー・APIキー保存検証（21件）
 ```
 
 ### コマンド
@@ -98,7 +98,7 @@ npm run dev      # http://localhost:5173/koekaki/  ← 末尾の /koekaki/ が�
 npm run build
 npm run build:desktop
 npm run typecheck
-npm test         # 69件（Web回帰36 + ホットキー5 + 貼り付け10 + デスクトップ18）
+npm test         # 72件（Web回帰36 + ホットキー5 + 貼り付け10 + デスクトップ21）
 npm run test:paste # Ctrl+V用INPUT構造の自己テスト。実際のキー入力は送らない
 ```
 
@@ -309,7 +309,7 @@ Windows PowerShell は BOM 無しの `.ps1` を ANSI として読むため、
 - PWA（manifest / Service Worker / アイコン / インストール可能）
 - 3社の API 疎通（公開URLからの CORS、認証エラーの取り回し）
 - 録音 → 16kHz WAV 変換（合成音声で実ブラウザ検証）
-- 回帰テスト69件（ルール整形18 + 音声認識18 + ホットキープロトコル5 + 貼り付けプロトコル10 + デスクトップ18）
+- 回帰テスト72件（ルール整形18 + 音声認識18 + ホットキープロトコル5 + 貼り付けプロトコル10 + デスクトップ21）
 - Electronの安全な専用URL、sandboxed preload、非表示controllerの自己テスト
 - Ctrl+V用 `INPUT` 構造、対象照合、修飾キー判定の自己テスト（実キー送信なし）
 - 表示専用録音バーの4状態、隔離bridge、非フォーカスwindow、位置、captureの自己テスト

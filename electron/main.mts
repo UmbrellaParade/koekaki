@@ -903,6 +903,21 @@ function registerIpcHandlers() {
     return claimDelivery(payload.requestId, payload.text, currentPasteTarget)
   })
 
+  ipcMain.handle(DESKTOP_CHANNELS.readApiKeyClipboard, async (event) => {
+    requireTrustedIpcSender(event)
+    const win = controllerWindow
+    if (!win || !win.isVisible() || !win.isFocused()) {
+      throw new Error('API key clipboard access requires the focused settings window')
+    }
+    const rawText = clipboard.readText()
+    if (rawText.length > 16_384) throw new Error('Invalid API key clipboard text')
+    const text = rawText.replace(/\s+/g, '')
+    if (!text) return ''
+    const parsed = parseApiKeys({ ...EMPTY_API_KEYS, openai: text })
+    if (!parsed) throw new Error('Invalid API key clipboard text')
+    return text
+  })
+
   ipcMain.handle(DESKTOP_CHANNELS.writeClipboard, async (event, rawText: unknown) => {
     requireTrustedIpcSender(event)
     const text = parseClipboardText(rawText)
@@ -1225,12 +1240,14 @@ function runDesktopShellSelfTest() {
         const rendererCheck = (await win.webContents.executeJavaScript(`({
           secure: window.isSecureContext,
           bridge: window.koekakiDesktop?.isDesktop === true,
+          apiKeyClipboardBridge: typeof window.koekakiDesktop?.readApiKeyClipboard === 'function',
           nodeGlobalsHidden: typeof window.require === 'undefined' && typeof window.process === 'undefined',
           protocol: window.location.protocol,
           host: window.location.hostname
         })`)) as {
           secure?: boolean
           bridge?: boolean
+          apiKeyClipboardBridge?: boolean
           nodeGlobalsHidden?: boolean
           protocol?: string
           host?: string
@@ -1238,6 +1255,7 @@ function runDesktopShellSelfTest() {
         const controllerPassed =
           rendererCheck.secure === true &&
           rendererCheck.bridge === true &&
+          rendererCheck.apiKeyClipboardBridge === true &&
           rendererCheck.nodeGlobalsHidden === true &&
           rendererCheck.protocol === `${DESKTOP_SCHEME}:` &&
           rendererCheck.host === 'app'
