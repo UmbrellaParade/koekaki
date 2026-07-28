@@ -9,13 +9,16 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types scripts/test-rule-polish.ts && node --experimental-strip-types scripts/test-webspeech.ts && node --experimental-strip-types scripts/test-hotkey-protocol.ts",
+    "test": "node --experimental-strip-types scripts/test-rule-polish.ts && node --experimental-strip-types scripts/test-webspeech.ts && node --experimental-strip-types scripts/test-hotkey-protocol.ts && node --experimental-strip-types scripts/test-desktop.ts",
     "test:hotkey": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File electron/hotkey.ps1 -SelfTest",
     "test:electron-hotkey": "npm run build:electron && electron . --hotkey-self-test",
+    "test:electron-desktop": "npm run build:desktop && electron . --desktop-shell-self-test",
     "install:electron-binary": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-electron.ps1",
     "build:electron": "tsc -p electron/tsconfig.json",
-    "desktop": "npm run build:electron && electron .",
-    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false"
+    "build:desktop-renderer": "vite build --mode desktop",
+    "build:desktop": "npm run build:electron && npm run build:desktop-renderer",
+    "desktop": "npm run build:desktop && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit"
   },
   "dependencies": {
     "react": "^19.1.0",

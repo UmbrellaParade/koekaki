@@ -11,6 +11,7 @@ import { SettingsSheet } from './components/SettingsSheet'
 import { ToastArea, useToasts } from './components/Toast'
 import { formatDuration } from './lib/audio'
 import { addHistory, clearHistory, deleteHistory, listHistory } from './lib/db'
+import { compactDesktopMessage, decideDesktopCommand, type DesktopCommand } from './lib/desktopFlow'
 import { processRecording } from './lib/pipeline'
 import { allModes, findMode } from './lib/prompts'
 import { WebSpeechTranscriber, type SpeechDiagnostic } from './lib/providers/webspeech'
@@ -28,6 +29,7 @@ interface Result {
 }
 
 export default function App() {
+  const desktop = window.koekakiDesktop
   const [settings, setSettings] = useState<Settings>(() => loadSettings())
   const [phase, setPhase] = useState<Phase>('idle')
   const [level, setLevel] = useState(0)
@@ -45,12 +47,16 @@ export default function App() {
     () => (loadSettings().onboarded ? 'none' : 'onboarding'),
   )
   const [editingMode, setEditingMode] = useState<Mode | null | undefined>(undefined)
-  const { toasts, push } = useToasts()
+  const [desktopKeysLoaded, setDesktopKeysLoaded] = useState(() => !desktop)
 
   const recorderRef = useRef<Recorder | null>(null)
   const speechRef = useRef<WebSpeechTranscriber | null>(null)
   const startedAtRef = useRef(0)
   const spaceHeldRef = useRef(false)
+  const phaseRef = useRef<Phase>('idle')
+  const desktopRequestIdRef = useRef<string | null>(null)
+  const desktopReadyReportedRef = useRef(false)
+  const apiKeySaveQueueRef = useRef<Promise<void>>(Promise.resolve())
   /** 追記モードで直前の結果につなぐために、最新の結果を参照できるようにしておく */
   const resultRef = useRef<Result | null>(null)
   resultRef.current = result
@@ -59,19 +65,52 @@ export default function App() {
   /** 無音検出からの停止要求を、最新の stop 関数に渡すための箱 */
   const stopRef = useRef<() => void>(() => {})
 
+  const { toasts, push: pushToast } = useToasts()
+  const push = useCallback(
+    (kind: 'ok' | 'err' | 'info', message: string, hint?: string) => {
+      pushToast(kind, message, hint)
+      if (kind !== 'err' || !desktop) return
+      const compactMessage = compactDesktopMessage(message)
+      if (!compactMessage) return
+      desktop.reportError({
+        message: compactMessage,
+        hint: compactDesktopMessage(hint),
+        requestId: desktopRequestIdRef.current ?? undefined,
+      })
+    },
+    [desktop, pushToast],
+  )
+
+  const setAppPhase = useCallback((next: Phase) => {
+    phaseRef.current = next
+    setPhase(next)
+  }, [])
+
   const modes = useMemo(() => allModes(settings.customModes), [settings.customModes])
   const activeMode = useMemo(
     () => findMode(settings.activeModeId, settings.customModes),
     [settings.activeModeId, settings.customModes],
   )
 
-  const patch = useCallback((p: Partial<Settings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...p }
-      saveSettings(next)
-      return next
-    })
-  }, [])
+  const patch = useCallback(
+    (p: Partial<Settings>) => {
+      if (desktop && p.apiKeys) {
+        const apiKeys = p.apiKeys
+        apiKeySaveQueueRef.current = apiKeySaveQueueRef.current
+          .catch(() => undefined)
+          .then(() => desktop.saveApiKeys(apiKeys))
+        void apiKeySaveQueueRef.current.catch(() => {
+          push('err', 'API キーを保存できませんでした', 'もう一度貼り付けてください。')
+        })
+      }
+      setSettings((prev) => {
+        const next = { ...prev, ...p }
+        saveSettings(next)
+        return next
+      })
+    },
+    [desktop, push],
+  )
 
   // ---- テーマ ----
   useEffect(() => {
@@ -96,6 +135,26 @@ export default function App() {
       .then(setHistory)
       .catch(() => undefined)
   }, [])
+
+  // ---- Electron の API キー（localStorage ではなく main 側の安全な保存領域） ----
+  useEffect(() => {
+    if (!desktop) return
+    let active = true
+    void desktop
+      .loadApiKeys()
+      .then((apiKeys) => {
+        if (active) setSettings((prev) => ({ ...prev, apiKeys }))
+      })
+      .catch(() => {
+        if (active) push('err', 'API キーを読み込めませんでした', '設定画面で保存し直してください。')
+      })
+      .finally(() => {
+        if (active) setDesktopKeysLoaded(true)
+      })
+    return () => {
+      active = false
+    }
+  }, [desktop, push])
 
   // ---- 録音中の経過時間 ----
   useEffect(() => {
@@ -129,24 +188,57 @@ export default function App() {
     return [...new Set(needs)]
   }, [settings, activeMode])
 
+  useEffect(() => {
+    if (!desktop || !desktopReadyReportedRef.current || phase === 'idle') return
+    desktop.reportState({
+      phase,
+      requestId: desktopRequestIdRef.current ?? undefined,
+    })
+  }, [desktop, phase])
+
+  useEffect(() => {
+    if (!desktop) return
+    return desktop.onOpenSettings(() => setSheet('settings'))
+  }, [desktop])
+
   const copyText = useCallback(
     async (text: string, silent = false) => {
       if (!text) return
       try {
-        await navigator.clipboard.writeText(text)
+        if (desktop) await desktop.writeClipboard(text)
+        else await navigator.clipboard.writeText(text)
         if (!silent) push('ok', 'コピーしました')
       } catch {
         if (!silent) push('err', 'コピーできませんでした', 'テキストを選択して手動でコピーしてください。')
       }
     },
-    [push],
+    [desktop, push],
+  )
+
+  const settleIdle = useCallback(
+    (requestId: string | null = desktopRequestIdRef.current) => {
+      if (desktop && desktopReadyReportedRef.current) {
+        desktop.reportState({ phase: 'idle', requestId: requestId ?? undefined })
+      }
+      if (requestId === null || desktopRequestIdRef.current === requestId) {
+        desktopRequestIdRef.current = null
+      }
+      setAppPhase('idle')
+    },
+    [desktop, setAppPhase],
   )
 
   // ---- 変換の実行 ----
   const runProcess = useCallback(
-    async (audio: Blob | null, webSpeechText: string | null, durationMs: number, mode: Mode) => {
+    async (
+      audio: Blob | null,
+      webSpeechText: string | null,
+      durationMs: number,
+      mode: Mode,
+      desktopRequestId: string | null,
+    ) => {
       if (!audio && !webSpeechText) {
-        setPhase('idle')
+        settleIdle(desktopRequestId)
         return
       }
       try {
@@ -156,12 +248,12 @@ export default function App() {
           durationMs,
           settings,
           mode,
-          onStage: (stage) => setPhase(stage),
+          onStage: setAppPhase,
         })
 
         if (!out.polished.trim()) {
-          setPhase('idle')
           push('err', '声が聞き取れませんでした', 'マイクに近づくか、もう少し長めに話してみてください。')
+          settleIdle(desktopRequestId)
           return
         }
 
@@ -179,10 +271,14 @@ export default function App() {
           engine: out.engine,
           costUsd: (previous?.costUsd ?? 0) + out.costUsd,
         })
-        setPhase('idle')
         setLiveText('')
 
-        if (settings.autoCopy) void copyText(joinedPolished, true)
+        if (desktop && desktopRequestId) {
+          // 追記後の全文ではなく、今回の録音で得た分だけを渡す。
+          await desktop.completeDictation({ requestId: desktopRequestId, text: out.polished })
+        } else if (settings.autoCopy) {
+          void copyText(joinedPolished, true)
+        }
 
         if (settings.saveHistory) {
           const item: HistoryItem = {
@@ -200,18 +296,20 @@ export default function App() {
             .then(() => setHistory((prev) => [item, ...prev]))
             .catch(() => undefined)
         }
+        settleIdle(desktopRequestId)
       } catch (err) {
-        setPhase('idle')
         if (err instanceof ApiError) push('err', err.message, err.hint)
         else push('err', err instanceof Error ? err.message : '変換に失敗しました')
+        settleIdle(desktopRequestId)
       }
     },
-    [settings, push, copyText],
+    [settings, setAppPhase, settleIdle, push, desktop, copyText],
   )
 
   // ---- 録音の開始・停止 ----
-  const startRecording = useCallback(async () => {
-    if (phase !== 'idle') return
+  const startRecording = useCallback(async (desktopRequestId: string | null = null) => {
+    if (phaseRef.current !== 'idle') return
+    desktopRequestIdRef.current = desktopRequestId
     if (missingKey.length > 0) {
       // 画面上部のバナーに一発で直せるボタンを出しているので、そちらへ誘導する。
       // ここで設定画面を開いてしまうと、何を直せばいいのか分からなくなる。
@@ -220,9 +318,13 @@ export default function App() {
         `${missingKey.join(' と ')} の API キーが未設定です`,
         '画面上の黄色い案内から「キーなしで無料で使う」または使えるキーを選んでください。',
       )
+      if (desktopRequestId) setSheet('settings')
+      settleIdle(desktopRequestId)
+      if (desktopRequestId) desktop?.requestOpenSettings()
       return
     }
 
+    setAppPhase('starting')
     setLiveText('')
     setElapsedMs(0)
     setPending(null)
@@ -247,18 +349,29 @@ export default function App() {
         speechRef.current = null
         if (err instanceof ApiError) push('err', err.message, err.hint)
         else push('err', 'ブラウザの音声認識を開始できませんでした')
+        settleIdle(desktopRequestId)
         return
       }
       startedAtRef.current = performance.now()
       lastPartialAtRef.current = performance.now()
-      setPhase('recording')
+      setAppPhase('recording')
       return
     }
 
     const recorder = new Recorder({
       onLevel: setLevel,
       onSilence: () => stopRef.current(),
-      onError: (e) => push('err', e.message),
+      onError: (e) => {
+        // stop 済みの古い Recorder から遅れて届いたエラーで、現セッションを壊さない。
+        if (recorderRef.current !== recorder) return
+        recorder.cancel()
+        recorderRef.current = null
+        setLevel(0)
+        setLiveText('')
+        setPending(null)
+        push('err', e.message)
+        settleIdle(desktopRequestId)
+      },
     })
     recorderRef.current = recorder
 
@@ -276,30 +389,32 @@ export default function App() {
             ? 'マイクが見つかりません。接続を確認してください。'
             : 'HTTPS でないページではマイクを使えません。',
       )
+      settleIdle(desktopRequestId)
       return
     }
 
     startedAtRef.current = performance.now()
-    setPhase('recording')
-  }, [phase, missingKey, settings, push])
+    setAppPhase('recording')
+  }, [missingKey, settings, push, setAppPhase, settleIdle, desktop])
 
   const stopRecording = useCallback(async () => {
-    if (phase !== 'recording') return
+    if (phaseRef.current !== 'recording') return
+    const desktopRequestId = desktopRequestIdRef.current
+    setAppPhase('transcribing')
     const durationMsRaw = performance.now() - startedAtRef.current
 
     // ---- ブラウザ内蔵の音声認識 ----
     const speech = speechRef.current
     if (speech) {
       speechRef.current = null
-      setPhase('transcribing')
       let webSpeechText = ''
       try {
         webSpeechText = await speech.stop()
       } catch (err) {
         setDiagnostics(speech.getDiagnostics())
-        setPhase('idle')
         if (err instanceof ApiError) push('err', err.message, err.hint)
         else push('err', '音声認識に失敗しました')
+        settleIdle(desktopRequestId)
         return
       }
       // 実機で何が返ってきたのかを、あとから設定画面で確認できるようにしておく
@@ -307,7 +422,6 @@ export default function App() {
 
       if (!webSpeechText.trim()) {
         // ここで黙って終わると「押しても無反応」に見えるので、必ず理由を出す
-        setPhase('idle')
         push(
           'err',
           '声を認識できませんでした',
@@ -315,23 +429,27 @@ export default function App() {
             ? 'もう少し長め（2秒以上）に話してみてください。'
             : 'マイクの許可を確認し、はっきり話してみてください。改善しない場合は設定で文字起こしを Gemini か OpenAI に切り替えると安定します。',
         )
+        settleIdle(desktopRequestId)
         return
       }
 
-      if (!settings.autoProcess) {
-        setPhase('idle')
+      if (!settings.autoProcess && !desktopRequestId) {
         setPending({ audio: null, webSpeechText, durationMs: durationMsRaw })
+        settleIdle(desktopRequestId)
         return
       }
-      await runProcess(null, webSpeechText, durationMsRaw, activeMode)
+      await runProcess(null, webSpeechText, durationMsRaw, activeMode, desktopRequestId)
       return
     }
 
     // ---- 録音して API に送る経路 ----
     const recorder = recorderRef.current
-    if (!recorder) return
+    if (!recorder) {
+      push('err', '録音状態を確認できませんでした', 'もう一度お試しください。')
+      settleIdle(desktopRequestId)
+      return
+    }
     recorderRef.current = null
-    setPhase('transcribing')
 
     let audio: Blob | null = null
     let durationMs = durationMsRaw
@@ -340,38 +458,39 @@ export default function App() {
       audio = res.blob
       durationMs = res.durationMs
     } catch {
-      setPhase('idle')
       setLevel(0)
       push('err', '録音データを取り出せませんでした', 'もう一度お試しください。')
+      settleIdle(desktopRequestId)
       return
     }
     setLevel(0)
 
     if (durationMs < 400) {
-      setPhase('idle')
       push('err', '短すぎます', '1秒以上話してください。')
+      settleIdle(desktopRequestId)
       return
     }
 
     if (!audio || audio.size < 1024) {
-      setPhase('idle')
       push('err', '音声が空でした', 'マイクがミュートになっていないか確認してください。')
+      settleIdle(desktopRequestId)
       return
     }
 
-    if (!settings.autoProcess) {
+    if (!settings.autoProcess && !desktopRequestId) {
       // 録音を手元に置いたまま待つ。モードを選び直してから変換できる。
-      setPhase('idle')
       setPending({ audio, webSpeechText: null, durationMs })
+      settleIdle(desktopRequestId)
       return
     }
 
-    await runProcess(audio, null, durationMs, activeMode)
-  }, [phase, settings.autoProcess, activeMode, runProcess, push])
+    await runProcess(audio, null, durationMs, activeMode, desktopRequestId)
+  }, [settings.autoProcess, activeMode, runProcess, push, setAppPhase, settleIdle])
 
   stopRef.current = () => void stopRecording()
 
   const cancelRecording = useCallback(() => {
+    const desktopRequestId = desktopRequestIdRef.current
     recorderRef.current?.cancel()
     recorderRef.current = null
     speechRef.current?.cancel()
@@ -379,13 +498,31 @@ export default function App() {
     setLevel(0)
     setLiveText('')
     setPending(null)
-    setPhase('idle')
-  }, [])
+    settleIdle(desktopRequestId)
+  }, [settleIdle])
 
   const toggleRecording = useCallback(() => {
-    if (phase === 'recording') void stopRecording()
-    else if (phase === 'idle') void startRecording()
-  }, [phase, startRecording, stopRecording])
+    if (phaseRef.current === 'recording') void stopRecording()
+    else if (phaseRef.current === 'idle') void startRecording(null)
+  }, [startRecording, stopRecording])
+
+  useEffect(() => {
+    if (!desktop || !desktopKeysLoaded) return
+
+    // 先に購読を確立し、その後で main に準備完了を伝える。
+    const unsubscribe = desktop.onCommand((command: DesktopCommand) => {
+      const decision = decideDesktopCommand(phaseRef.current, desktopRequestIdRef.current, command)
+      if (decision === 'start') void startRecording(command.requestId)
+      else if (decision === 'stop') void stopRecording()
+    })
+
+    if (!desktopReadyReportedRef.current) {
+      desktopReadyReportedRef.current = true
+      desktop.reportReady({ onboarded: settings.onboarded })
+      desktop.reportState({ phase: 'idle' })
+    }
+    return unsubscribe
+  }, [desktop, desktopKeysLoaded, settings.onboarded, startRecording, stopRecording])
 
   // ---- スペースキーで録音 ----
   useEffect(() => {
@@ -404,6 +541,8 @@ export default function App() {
       if (e.code === 'AltRight') {
         if (e.repeat) return
         e.preventDefault()
+        // Electron では PowerShell フックから届く requestId 付き指示だけを使う。
+        if (desktop) return
         if (phase === 'recording') void stopRecording()
         else if (phase === 'idle') void startRecording()
         return
@@ -432,14 +571,14 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [phase, sheet, editingMode, startRecording, stopRecording])
+  }, [desktop, phase, sheet, editingMode, startRecording, stopRecording])
 
   // ---- 各種ハンドラ ----
   const handleConvertPending = useCallback(() => {
     if (!pending) return
     const { audio, webSpeechText, durationMs } = pending
     setPending(null)
-    void runProcess(audio, webSpeechText, durationMs, activeMode)
+    void runProcess(audio, webSpeechText, durationMs, activeMode, null)
   }, [pending, activeMode, runProcess])
 
   const handleAddToDictionary = useCallback(
@@ -461,7 +600,7 @@ export default function App() {
 
   const handleRepolish = useCallback(() => {
     if (!result?.raw) return
-    void runProcess(null, result.raw, 0, activeMode)
+    void runProcess(null, result.raw, 0, activeMode, null)
   }, [result, activeMode, runProcess])
 
   const handleShare = useCallback(async () => {
@@ -521,7 +660,7 @@ export default function App() {
     setHistory((prev) => prev.filter((h) => h.id !== id))
   }, [])
 
-  const busy = phase === 'transcribing' || phase === 'polishing'
+  const busy = phase === 'starting' || phase === 'transcribing' || phase === 'polishing'
 
   return (
     <div className="app">

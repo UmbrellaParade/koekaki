@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["main.mts", "hotkeyProtocol.ts"]
+  "include": ["main.mts", "preload.cts", "desktopContract.ts", "desktopProtocol.ts", "hotkeyProtocol.ts"]
 }

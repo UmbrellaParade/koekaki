@@ -17,7 +17,7 @@ createRoot(container).render(
  * 「直したはずの不具合が消えない」の原因になるので、
  * 画面に戻ってくるたびに新しい版が無いか確認し、あれば読み込み直す。
  */
-if ('serviceWorker' in navigator) {
+if (!__DESKTOP__ && 'serviceWorker' in navigator) {
   const checkForUpdate = () => {
     if (document.visibilityState !== 'visible') return
     void navigator.serviceWorker.getRegistration().then((reg) => reg?.update())

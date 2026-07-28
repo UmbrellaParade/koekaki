@@ -628,13 +628,16 @@ export function SettingsSheet({
             >
               {__BUILD_ID__}
             </code>
-            <button className="btn sm" onClick={() => void forceUpdate()}>
-              最新版に更新
-            </button>
+            {!__DESKTOP__ && (
+              <button className="btn sm" onClick={() => void forceUpdate()}>
+                最新版に更新
+              </button>
+            )}
           </div>
           <div className="desc">
-            スマホに追加したアプリは古い版が残ることがあります。直したはずの不具合が続くときは、
-            まずここの日時を確認して「最新版に更新」を押してください。
+            {__DESKTOP__
+              ? 'デスクトップ版ではブラウザのキャッシュ更新は使いません。現在の版は上の日時で確認できます。'
+              : 'スマホに追加したアプリは古い版が残ることがあります。直したはずの不具合が続くときは、まずここの日時を確認して「最新版に更新」を押してください。'}
           </div>
         </div>
 

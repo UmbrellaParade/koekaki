@@ -8,8 +8,10 @@ Codex が作ったものを引き渡す前、および第三者が点検する�
 
 ## A. 壊していないか（毎回必ず）
 
-- [ ] `npm test` が通る（31件。増えているのは可、減っているのは要説明）
+- [ ] `npm test` が通る（46件。増えているのは可、減っているのは要説明）
 - [ ] `npm run build` が通る
+- [ ] `npm run build:desktop` と `npm run test:electron-desktop` が通る
+- [ ] `npm run typecheck` がWeb版・Electron版とも通る
 - [ ] `npm run dev` で `http://localhost:5173/koekaki/` が開く
 - [ ] GitHub Actions のデプロイが成功している
 - [ ] 公開URLが最新版になっている（設定画面のビルド日時で確認）
@@ -28,7 +30,7 @@ Codex が作ったものを引き渡す前、および第三者が点検する�
 - [ ] **認識途中の文字が既定で表示されていない**
 - [ ] APIキー入力欄が `type="password"` に戻されていない
       （`autoCapitalize="none"` `autoCorrect="off"` も維持）
-- [ ] 設定画面のビルド日時表示と「最新版に更新」が残っている
+- [ ] 設定画面のビルド日時表示が残り、Web版では「最新版に更新」も表示される
 
 ## C. 失敗の扱い
 

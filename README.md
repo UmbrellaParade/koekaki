@@ -113,7 +113,11 @@ npm run dev
 
 ```bash
 npm run build
+npm run build:desktop
 ```
+
+`build` はGitHub Pages向けPWA、`build:desktop` はElectron本体と専用rendererを作ります。
+デスクトップ版を起動する場合は `npm run desktop` を使います。
 
 ### テスト
 
@@ -137,6 +141,15 @@ Electron からフックを起動して受信できることまで確認する�
 ```bash
 npm run test:electron-hotkey
 ```
+
+安全な専用URL、sandboxed preload、非表示controllerまでまとめて確認する場合:
+
+```bash
+npm run test:electron-desktop
+```
+
+デスクトップ版のAPIキーはWeb版の `localStorage` と共有せず、Windowsの暗号化保存を使います。
+ソース、環境変数、IPCの状態通知には保存しません。
 
 このPCのApplication ControlがElectron付属のZIP展開モジュールを拒否する場合は、
 次を一度実行します。公式配布ZIPのSHA-256を照合し、Windows標準機能で展開します。

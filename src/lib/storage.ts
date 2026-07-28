@@ -2,6 +2,17 @@ import type { Settings } from './types'
 
 const KEY = 'koekaki.settings.v1'
 
+function isDesktopRuntime(): boolean {
+  return typeof window !== 'undefined' && window.koekakiDesktop?.isDesktop === true
+}
+
+/** Electron では API キーを Chromium の localStorage に残さない。 */
+function withoutApiKeys(settings: Partial<Settings>): Partial<Settings> {
+  const safe = { ...settings }
+  delete safe.apiKeys
+  return safe
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   apiKeys: { gemini: '', openai: '', anthropic: '' },
   transcribeEngine: 'gemini',
@@ -35,10 +46,19 @@ export function loadSettings(): Settings {
     const stored = localStorage.getItem(KEY)
     if (!stored) return { ...DEFAULT_SETTINGS }
     const parsed = JSON.parse(stored) as Partial<Settings>
+    const desktop = isDesktopRuntime()
+
+    // 以前 file:// 等で起動した版がキーを保存していた場合も、読まずに削除する。
+    if (desktop && Object.prototype.hasOwnProperty.call(parsed, 'apiKeys')) {
+      localStorage.setItem(KEY, JSON.stringify(withoutApiKeys(parsed)))
+    }
+
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      apiKeys: { ...DEFAULT_SETTINGS.apiKeys, ...(parsed.apiKeys ?? {}) },
+      apiKeys: desktop
+        ? { ...DEFAULT_SETTINGS.apiKeys }
+        : { ...DEFAULT_SETTINGS.apiKeys, ...(parsed.apiKeys ?? {}) },
       models: { ...DEFAULT_SETTINGS.models, ...(parsed.models ?? {}) },
       customModes: Array.isArray(parsed.customModes) ? parsed.customModes : [],
       dictionary: Array.isArray(parsed.dictionary) ? parsed.dictionary : [],
@@ -50,7 +70,7 @@ export function loadSettings(): Settings {
 
 export function saveSettings(settings: Settings): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(settings))
+    localStorage.setItem(KEY, JSON.stringify(isDesktopRuntime() ? withoutApiKeys(settings) : settings))
   } catch {
     // 容量超過などは致命的ではないので握りつぶす
   }

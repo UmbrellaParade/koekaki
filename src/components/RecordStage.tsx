@@ -1,7 +1,7 @@
 import { formatDuration } from '../lib/audio'
 import { LoaderIcon, MicIcon, StopIcon } from './Icons'
 
-export type Phase = 'idle' | 'recording' | 'transcribing' | 'polishing'
+export type Phase = 'idle' | 'starting' | 'recording' | 'transcribing' | 'polishing'
 
 interface RecordStageProps {
   phase: Phase
@@ -21,6 +21,7 @@ interface RecordStageProps {
 
 const STATUS: Record<Phase, { primary: string; secondary: string }> = {
   idle: { primary: 'タップして話す', secondary: '詰まっても、言い直しても大丈夫です' },
+  starting: { primary: 'マイクを準備しています…', secondary: '少しだけお待ちください' },
   recording: { primary: '聞いています…', secondary: 'もう一度タップで停止' },
   transcribing: { primary: '文字にしています…', secondary: '音声を送信中' },
   polishing: { primary: '文章を整えています…', secondary: 'もう少しです' },
@@ -40,7 +41,7 @@ export function RecordStage({
   showKeyboardHint,
 }: RecordStageProps) {
   const recording = phase === 'recording'
-  const busy = phase === 'transcribing' || phase === 'polishing'
+  const busy = phase === 'starting' || phase === 'transcribing' || phase === 'polishing'
   const status = STATUS[phase]
 
   // 音量に合わせてリングを膨らませる。1.0〜1.45 の範囲に収めると煩くならない。
