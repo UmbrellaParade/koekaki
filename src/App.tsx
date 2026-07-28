@@ -338,9 +338,10 @@ export default function App() {
           setLiveText(text)
           lastPartialAtRef.current = performance.now()
         },
-        // 単発モード（スマホ）では、話し終わるとブラウザ側が認識を終える。
-        // それをそのまま録音の終了として扱う。
-        onAutoEnd: () => stopRef.current(),
+        onUnavailable: () => {
+          if (speechRef.current !== speech) return
+          stopRef.current()
+        },
       })
       speechRef.current = speech
       try {
@@ -431,6 +432,14 @@ export default function App() {
         )
         settleIdle(desktopRequestId)
         return
+      }
+
+      if (speech.getTerminalError()) {
+        push(
+          'info',
+          '音声認識が途中で中断されました',
+          'ここまで聞き取れた内容だけを処理します。続きは、もう一度マイクを押して話してください。',
+        )
       }
 
       if (!settings.autoProcess && !desktopRequestId) {

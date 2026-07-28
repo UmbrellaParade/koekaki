@@ -1037,3 +1037,90 @@ p {
   white-space: nowrap;
   border: 0;
 }
+
+/* ===== Electron 録音バー ===== */
+html[data-surface='voicebar'],
+html[data-surface='voicebar'] body,
+html[data-surface='voicebar'] #root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+  color-scheme: light;
+}
+
+.voice-bar {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid rgba(18, 18, 18, 0.1);
+  border-radius: 28px;
+  background: #f1f1f1;
+  box-shadow: 0 10px 28px rgba(18, 18, 18, 0.2);
+  color: #151515;
+  user-select: none;
+}
+
+.voice-bar__halo {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e6e6e6;
+}
+
+.voice-bar__core {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #131313;
+  color: #ffffff;
+}
+
+.voice-bar--recording .voice-bar__core {
+  animation: voice-bar-pulse 1.8s ease-in-out infinite;
+}
+
+.voice-bar__copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.voice-bar__brand {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.08em;
+  color: #656565;
+}
+
+.voice-bar__message {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes voice-bar-pulse {
+  50% {
+    transform: scale(1.05);
+  }
+}

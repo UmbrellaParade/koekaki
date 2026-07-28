@@ -34,6 +34,13 @@ interface KoekakiDesktopBridge {
   saveApiKeys(keys: KoekakiDesktopApiKeys): Promise<void>
 }
 
+type KoekakiVoiceBarPhase = 'starting' | 'recording' | 'transcribing' | 'polishing'
+
+interface KoekakiVoiceBarBridge {
+  onPhase(callback: (phase: KoekakiVoiceBarPhase) => void): () => void
+}
+
 interface Window {
   readonly koekakiDesktop?: KoekakiDesktopBridge
+  readonly koekakiVoiceBar?: KoekakiVoiceBarBridge
 }

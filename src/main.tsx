@@ -1,14 +1,18 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import VoiceBar from './components/VoiceBar'
 import './styles/global.css'
 
 const container = document.getElementById('root')
 if (!container) throw new Error('#root が見つかりません')
 
+const isVoiceBarSurface = __DESKTOP__ && new URLSearchParams(window.location.search).get('surface') === 'voicebar'
+if (isVoiceBarSurface) document.documentElement.dataset.surface = 'voicebar'
+
 createRoot(container).render(
   <StrictMode>
-    <App />
+    {isVoiceBarSurface ? <VoiceBar /> : <App />}
   </StrictMode>,
 )
 

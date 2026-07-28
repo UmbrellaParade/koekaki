@@ -4,6 +4,9 @@ export const DESKTOP_SCHEME = 'koekaki'
 export const DESKTOP_HOST = 'app'
 export const DESKTOP_PARTITION = 'persist:koekaki'
 export const DESKTOP_APP_URL = `${DESKTOP_SCHEME}://${DESKTOP_HOST}/index.html`
+export const VOICE_BAR_PARTITION = 'koekaki:voicebar'
+export const VOICE_BAR_APP_URL = `${DESKTOP_APP_URL}?surface=voicebar`
+export const VOICE_BAR_PHASE_CHANNEL = 'koekaki:voicebar-phase'
 
 export const DESKTOP_CHANNELS = {
   command: 'koekaki:desktop-command',
@@ -19,6 +22,7 @@ export const DESKTOP_CHANNELS = {
 } as const
 
 export type DesktopPhase = 'idle' | 'starting' | 'recording' | 'transcribing' | 'polishing' | 'error'
+export type VoiceBarPhase = Extract<DesktopPhase, 'starting' | 'recording' | 'transcribing' | 'polishing'>
 
 export interface DesktopReadyPayload {
   onboarded: boolean
@@ -60,6 +64,7 @@ const PHASES = new Set<DesktopPhase>([
   'polishing',
   'error',
 ])
+const VOICE_BAR_PHASES = new Set<VoiceBarPhase>(['starting', 'recording', 'transcribing', 'polishing'])
 
 const MAX_CLIPBOARD_CHARS = 1_000_000
 const MAX_KEY_CHARS = 4_096
@@ -91,6 +96,15 @@ export function parseStatePayload(value: unknown): DesktopStatePayload | null {
     phase: value.phase as DesktopPhase,
     ...(value.requestId === undefined ? {} : { requestId: value.requestId }),
   }
+}
+
+export function isVoiceBarPhase(value: unknown): value is VoiceBarPhase {
+  return typeof value === 'string' && VOICE_BAR_PHASES.has(value as VoiceBarPhase)
+}
+
+export function resolveVoiceBarPhase(phase: DesktopPhase, hasActiveRequest: boolean): VoiceBarPhase | null {
+  if (isVoiceBarPhase(phase)) return phase
+  return phase === 'idle' && hasActiveRequest ? 'starting' : null
 }
 
 export function parseErrorPayload(value: unknown): DesktopErrorPayload | null {
@@ -164,6 +178,45 @@ export function isTrustedRendererUrl(rawUrl: string, developmentUrl?: string): b
       (allowed.hostname === '127.0.0.1' || allowed.hostname === 'localhost') &&
       allowed.protocol === 'http:' &&
       url.origin === allowed.origin
+    )
+  } catch {
+    return false
+  }
+}
+
+export function isTrustedVoiceBarRendererUrl(rawUrl: string, developmentUrl?: string): boolean {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return false
+  }
+
+  const hasVoiceBarSurface =
+    !url.username &&
+    !url.password &&
+    !url.hash &&
+    url.searchParams.get('surface') === 'voicebar' &&
+    [...url.searchParams.keys()].length === 1
+  if (!hasVoiceBarSurface) return false
+
+  if (
+    url.protocol === `${DESKTOP_SCHEME}:` &&
+    url.hostname === DESKTOP_HOST &&
+    !url.port &&
+    url.pathname === '/index.html'
+  ) {
+    return true
+  }
+
+  if (!developmentUrl) return false
+  try {
+    const allowed = new URL(developmentUrl)
+    return (
+      (allowed.hostname === '127.0.0.1' || allowed.hostname === 'localhost') &&
+      allowed.protocol === 'http:' &&
+      url.origin === allowed.origin &&
+      url.pathname === '/'
     )
   } catch {
     return false

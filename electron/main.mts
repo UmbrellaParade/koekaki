@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -12,6 +12,7 @@ import {
   Menu,
   nativeImage,
   safeStorage,
+  screen,
   session,
   shell,
   Tray,
@@ -25,6 +26,8 @@ import {
   DESKTOP_CHANNELS,
   DESKTOP_PARTITION,
   DESKTOP_SCHEME,
+  isTrustedVoiceBarRendererUrl,
+  isVoiceBarPhase,
   isAllowedExternalUrl,
   isTrustedRendererUrl,
   parseApiKeys,
@@ -34,9 +37,14 @@ import {
   parseReadyPayload,
   parseStatePayload,
   registerDesktopScheme,
+  resolveVoiceBarPhase,
   resolveDesktopAssetPath,
+  VOICE_BAR_APP_URL,
+  VOICE_BAR_PARTITION,
+  VOICE_BAR_PHASE_CHANNEL,
   type DesktopApiKeys,
   type DesktopPhase,
+  type VoiceBarPhase,
 } from './desktopProtocol.js'
 import {
   LineBuffer,
@@ -55,6 +63,10 @@ const HOTKEY_READY_TIMEOUT_MS = 8_000
 const HOTKEY_SELF_TEST_TIMEOUT_MS = 12_000
 const DESKTOP_SELF_TEST_TIMEOUT_MS = 20_000
 const PASTE_HELPER_TIMEOUT_MS = 12_000
+const VOICE_BAR_WIDTH = 420
+const VOICE_BAR_HEIGHT = 92
+const VOICE_BAR_BOTTOM_MARGIN = 24
+const VOICE_BAR_RECOVERY_DELAYS_MS = [250, 1_000, 3_000] as const
 const DEVELOPMENT_URLS = new Set(['http://127.0.0.1:5173', 'http://localhost:5173'])
 const EMPTY_API_KEYS: DesktopApiKeys = { gemini: '', openai: '', anthropic: '' }
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
@@ -65,6 +77,11 @@ const isAnySelfTest = isHotkeySelfTest || isDesktopShellSelfTest
 
 let tray: Tray | null = null
 let controllerWindow: BrowserWindow | null = null
+let voiceBarWindow: BrowserWindow | null = null
+let voiceBarReady = false
+let voiceBarShowVersion = 0
+let voiceBarRecoveryAttempts = 0
+let voiceBarRecoveryTimer: NodeJS.Timeout | null = null
 let hookProcess: ChildProcess | null = null
 let hookReady = false
 let hookPaused = false
@@ -115,6 +132,10 @@ function preloadPath(): string {
   return path.join(currentDirectory, 'preload.cjs')
 }
 
+function overlayPreloadPath(): string {
+  return path.join(currentDirectory, 'overlayPreload.cjs')
+}
+
 function apiKeyFilePath(): string {
   return path.join(app.getPath('userData'), 'api-keys.bin')
 }
@@ -131,6 +152,105 @@ function developmentUrl(): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function voiceBarRendererUrl(): string {
+  const devUrl = developmentUrl()
+  return devUrl ? `${devUrl}/?surface=voicebar` : VOICE_BAR_APP_URL
+}
+
+function positionVoiceBar(win: BrowserWindow): void {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const { x, y, width, height } = display.workArea
+  win.setBounds({
+    x: Math.round(x + (width - VOICE_BAR_WIDTH) / 2),
+    y: y + height - VOICE_BAR_HEIGHT - VOICE_BAR_BOTTOM_MARGIN,
+    width: VOICE_BAR_WIDTH,
+    height: VOICE_BAR_HEIGHT,
+  })
+}
+
+function syncVoiceBar(): void {
+  const win = voiceBarWindow
+  if (!win || win.isDestroyed()) return
+  const showVersion = ++voiceBarShowVersion
+  const voiceBarPhase = resolveVoiceBarPhase(rendererPhase, currentRequestId !== null)
+  if (!voiceBarReady || !voiceBarPhase) {
+    win.hide()
+    if (
+      !voiceBarReady &&
+      voiceBarPhase &&
+      !voiceBarRecoveryTimer &&
+      voiceBarRecoveryAttempts >= VOICE_BAR_RECOVERY_DELAYS_MS.length
+    ) {
+      voiceBarRecoveryAttempts = 0
+      scheduleVoiceBarRecovery()
+    }
+    return
+  }
+
+  positionVoiceBar(win)
+  win.webContents.send(VOICE_BAR_PHASE_CHANNEL, voiceBarPhase)
+  if (win.isVisible()) return
+
+  const expectedPhase = JSON.stringify(voiceBarPhase)
+  void win.webContents
+    .executeJavaScript(`(() => new Promise((resolve) => {
+      let framesRemaining = 8
+      const check = () => {
+        const rendered = document.querySelector('[data-voicebar-phase]')?.getAttribute('data-voicebar-phase')
+        if (rendered === ${expectedPhase}) return resolve(true)
+        framesRemaining -= 1
+        if (framesRemaining <= 0) return resolve(false)
+        requestAnimationFrame(check)
+      }
+      check()
+    }))()`)
+    .then((painted: unknown) => {
+      if (
+        painted !== true ||
+        showVersion !== voiceBarShowVersion ||
+        voiceBarWindow !== win ||
+        win.isDestroyed() ||
+        resolveVoiceBarPhase(rendererPhase, currentRequestId !== null) !== voiceBarPhase
+      ) {
+        return
+      }
+      positionVoiceBar(win)
+      win.showInactive()
+    })
+    .catch(() => undefined)
+}
+
+function clearVoiceBarRecoveryTimer(): void {
+  if (!voiceBarRecoveryTimer) return
+  clearTimeout(voiceBarRecoveryTimer)
+  voiceBarRecoveryTimer = null
+}
+
+function scheduleVoiceBarRecovery(): void {
+  voiceBarReady = false
+  voiceBarShowVersion += 1
+  const current = voiceBarWindow
+  if (current && !current.isDestroyed()) current.hide()
+  if (quitting || isAnySelfTest || voiceBarRecoveryTimer) return
+  if (voiceBarRecoveryAttempts >= VOICE_BAR_RECOVERY_DELAYS_MS.length) {
+    console.error('[voicebar] Recovery attempts were exhausted')
+    return
+  }
+
+  const delay = VOICE_BAR_RECOVERY_DELAYS_MS[voiceBarRecoveryAttempts]
+  voiceBarRecoveryAttempts += 1
+  voiceBarRecoveryTimer = setTimeout(() => {
+    voiceBarRecoveryTimer = null
+    if (quitting) return
+    const win = voiceBarWindow
+    if (!win || win.isDestroyed()) {
+      createVoiceBarWindow()
+      return
+    }
+    void win.loadURL(voiceBarRendererUrl()).catch(() => scheduleVoiceBarRecovery())
+  }, delay)
 }
 
 function clearHotkeyReadyTimer() {
@@ -262,6 +382,7 @@ function handleRightAlt(target: PasteTarget | null) {
       currentRequestId = null
       currentPasteTarget = null
     }
+    syncVoiceBar()
     updateTrayMenu()
     return
   }
@@ -723,6 +844,7 @@ function registerIpcHandlers() {
     currentRequestId = null
     currentPasteTarget = null
     stopRequested = false
+    syncVoiceBar()
     updateTrayMenu()
 
     if (!isAnySelfTest && !hookPaused && !hookProcess) {
@@ -747,6 +869,7 @@ function registerIpcHandlers() {
       currentPasteTarget = null
       stopRequested = false
     }
+    syncVoiceBar()
     updateTrayMenu()
   })
 
@@ -758,6 +881,7 @@ function registerIpcHandlers() {
 
     rendererIssue = payload.message
     if (payload.requestId !== undefined) rendererPhase = 'error'
+    syncVoiceBar()
     updateTrayMenu()
     displayBalloon(payload.hint ? `${payload.message}\n${payload.hint}` : payload.message, 'error')
   })
@@ -800,12 +924,38 @@ function registerIpcHandlers() {
 }
 
 function configureDesktopSession() {
+  const devUrl = developmentUrl()
   const desktopSession = session.fromPartition(DESKTOP_PARTITION)
   if (!desktopSession.protocol.isProtocolHandled(DESKTOP_SCHEME)) {
     desktopSession.protocol.handle(DESKTOP_SCHEME, createDesktopProtocolHandler(rendererRootPath()))
   }
 
-  const devUrl = developmentUrl()
+  const voiceBarSession = session.fromPartition(VOICE_BAR_PARTITION, { cache: false })
+  if (!voiceBarSession.protocol.isProtocolHandled(DESKTOP_SCHEME)) {
+    voiceBarSession.protocol.handle(DESKTOP_SCHEME, createDesktopProtocolHandler(rendererRootPath()))
+  }
+  voiceBarSession.setPermissionCheckHandler(() => false)
+  voiceBarSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+  voiceBarSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] },
+    (details, callback) => {
+      let allowedDevelopmentRequest = false
+      if (devUrl) {
+        try {
+          const allowed = new URL(devUrl)
+          const requested = new URL(details.url)
+          allowedDevelopmentRequest =
+            requested.hostname === allowed.hostname &&
+            requested.port === allowed.port &&
+            (requested.protocol === 'http:' || requested.protocol === 'ws:')
+        } catch {
+          allowedDevelopmentRequest = false
+        }
+      }
+      callback({ cancel: !allowedDevelopmentRequest })
+    },
+  )
+
   desktopSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     return Boolean(
       controllerWindow &&
@@ -840,6 +990,7 @@ async function markRendererUnavailable(message: string) {
   currentRequestId = null
   currentPasteTarget = null
   stopRequested = false
+  syncVoiceBar()
   await stopHotkey()
   if (rendererReady && !hookPaused && !hookProcess && !quitting) {
     try {
@@ -898,7 +1049,8 @@ function createControllerWindow(): BrowserWindow {
     }
     void markRendererUnavailable('画面プロセスが停止しました')
   })
-  win.webContents.on('did-fail-load', (_event, code, description) => {
+  win.webContents.on('did-fail-load', (_event, code, description, _url, isMainFrame) => {
+    if (!isMainFrame) return
     if (isDesktopShellSelfTest) {
       console.error(`ELECTRON_DESKTOP_SHELL_SELF_TEST_LOAD_FAILED code=${code} description=${description}`)
       finishSelfTest(1)
@@ -917,6 +1069,93 @@ function createControllerWindow(): BrowserWindow {
   return win
 }
 
+function createVoiceBarWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: VOICE_BAR_WIDTH,
+    height: VOICE_BAR_HEIGHT,
+    useContentSize: true,
+    show: false,
+    focusable: false,
+    skipTaskbar: true,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    title: 'こえかき 録音中',
+    webPreferences: {
+      partition: VOICE_BAR_PARTITION,
+      preload: overlayPreloadPath(),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+      devTools: !app.isPackaged,
+      webviewTag: false,
+      spellcheck: false,
+    },
+  })
+  voiceBarWindow = win
+  voiceBarReady = false
+  voiceBarShowVersion += 1
+  win.setIgnoreMouseEvents(true)
+  win.setAlwaysOnTop(true)
+  positionVoiceBar(win)
+
+  const devUrl = developmentUrl()
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedVoiceBarRendererUrl(url, devUrl)) event.preventDefault()
+  })
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!isTrustedVoiceBarRendererUrl(url, devUrl)) event.preventDefault()
+  })
+  win.webContents.on('did-start-loading', () => {
+    voiceBarReady = false
+    voiceBarShowVersion += 1
+    win.hide()
+  })
+  win.webContents.on('did-finish-load', () => {
+    clearVoiceBarRecoveryTimer()
+    voiceBarRecoveryAttempts = 0
+    voiceBarReady = true
+    syncVoiceBar()
+  })
+  win.webContents.on('render-process-gone', (_event, details) => {
+    if (isDesktopShellSelfTest) {
+      console.error(`ELECTRON_DESKTOP_SHELL_SELF_TEST_VOICE_BAR_GONE reason=${details.reason}`)
+      finishSelfTest(1)
+      return
+    }
+    scheduleVoiceBarRecovery()
+  })
+  win.webContents.on('did-fail-load', (_event, code, description) => {
+    if (isDesktopShellSelfTest) {
+      console.error(`ELECTRON_DESKTOP_SHELL_SELF_TEST_VOICE_BAR_LOAD_FAILED code=${code} description=${description}`)
+      finishSelfTest(1)
+      return
+    }
+    scheduleVoiceBarRecovery()
+  })
+  win.on('closed', () => {
+    if (voiceBarWindow === win) {
+      voiceBarWindow = null
+      voiceBarReady = false
+      voiceBarShowVersion += 1
+      scheduleVoiceBarRecovery()
+    }
+  })
+
+  void win.loadURL(voiceBarRendererUrl()).catch(() => scheduleVoiceBarRecovery())
+  return win
+}
+
 function createTray() {
   const sourceIcon = path.join(app.getAppPath(), 'public', 'icons', 'icon-192.png')
   const image = nativeImage.createFromPath(sourceIcon).resize({ width: 16, height: 16 })
@@ -931,6 +1170,7 @@ function runNormalMode() {
   registerIpcHandlers()
   createTray()
   createControllerWindow()
+  createVoiceBarWindow()
 }
 
 function runDesktopShellSelfTest() {
@@ -943,7 +1183,12 @@ function runDesktopShellSelfTest() {
     parseStatePayload({ phase: 'recording', requestId: 'not-a-request-id' }) === null &&
     parseReadyPayload({ onboarded: true, unexpected: true }) === null &&
     parseClipboardText('') === null &&
-    parseApiKeys({ gemini: '', openai: '', anthropic: '' }) !== null
+    parseApiKeys({ gemini: '', openai: '', anthropic: '' }) !== null &&
+    isVoiceBarPhase('recording') &&
+    !isVoiceBarPhase('idle') &&
+    !VOICE_BAR_PARTITION.startsWith('persist:') &&
+    isTrustedVoiceBarRendererUrl(VOICE_BAR_APP_URL) &&
+    !isTrustedVoiceBarRendererUrl(DESKTOP_APP_URL)
   if (!guardsPassed) {
     console.error('ELECTRON_DESKTOP_SHELL_SELF_TEST_GUARD_FAILED')
     finishSelfTest(1)
@@ -953,13 +1198,19 @@ function runDesktopShellSelfTest() {
   configureDesktopSession()
   registerIpcHandlers()
   const win = createControllerWindow()
+  const voiceWin = createVoiceBarWindow()
 
   selfTestTimer = setTimeout(() => {
     console.error('ELECTRON_DESKTOP_SHELL_SELF_TEST_TIMEOUT')
     finishSelfTest(1)
   }, DESKTOP_SELF_TEST_TIMEOUT_MS)
 
-  win.webContents.once('did-finish-load', () => {
+  let controllerLoaded = false
+  let voiceBarLoaded = false
+  let checksStarted = false
+  const runChecksWhenLoaded = () => {
+    if (checksStarted || !controllerLoaded || !voiceBarLoaded) return
+    checksStarted = true
     void (async () => {
       try {
         if (!(await safeStorage.isAsyncEncryptionAvailable())) {
@@ -984,13 +1235,191 @@ function runDesktopShellSelfTest() {
           protocol?: string
           host?: string
         }
-        const passed =
+        const controllerPassed =
           rendererCheck.secure === true &&
           rendererCheck.bridge === true &&
           rendererCheck.nodeGlobalsHidden === true &&
           rendererCheck.protocol === `${DESKTOP_SCHEME}:` &&
           rendererCheck.host === 'app'
-        if (!passed) throw new Error('secure shell checks failed')
+        if (!controllerPassed) throw new Error('secure controller shell checks failed')
+
+        for (let attempt = 0; attempt < 50 && !rendererReady; attempt += 1) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 20))
+        }
+        if (!rendererReady) throw new Error('controller renderer did not report ready')
+
+        await voiceWin.webContents.insertCSS('.voice-bar--recording .voice-bar__core { animation: none !important; }')
+        const phaseExpectations: ReadonlyArray<readonly [VoiceBarPhase, string]> = [
+          ['starting', 'マイクを準備しています…'],
+          ['recording', 'もう一度 右Alt で終了'],
+          ['transcribing', '文字にしています…'],
+          ['polishing', '文章を整えています…'],
+        ]
+        for (const [phase, expectedMessage] of phaseExpectations) {
+          rendererPhase = phase
+          syncVoiceBar()
+          await voiceWin.webContents.executeJavaScript(
+            'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+          )
+          const phaseCheck = (await voiceWin.webContents.executeJavaScript(`(() => {
+            const bar = document.querySelector('[data-voicebar-phase]')
+            const message = document.querySelector('.voice-bar__message')
+            return {
+              phase: bar?.getAttribute('data-voicebar-phase'),
+              message: message?.textContent,
+              fits: message instanceof HTMLElement && message.scrollWidth <= message.clientWidth
+            }
+          })()`)) as { phase?: string | null; message?: string | null; fits?: boolean }
+          if (
+            phaseCheck.phase !== phase ||
+            phaseCheck.message !== expectedMessage ||
+            phaseCheck.fits !== true
+          ) {
+            throw new Error(`voice bar phase rendering failed: ${phase}`)
+          }
+        }
+        console.log('ELECTRON_VOICE_BAR_PHASES_OK=starting,recording,transcribing,polishing')
+
+        rendererPhase = 'idle'
+        currentRequestId = null
+        syncVoiceBar()
+        if (voiceWin.isVisible()) throw new Error('voice bar did not hide between requests')
+        currentRequestId = randomUUID()
+        syncVoiceBar()
+        if (voiceWin.isVisible()) throw new Error('voice bar showed a stale phase before starting was painted')
+        await voiceWin.webContents.executeJavaScript(
+          'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        )
+        const immediateStartCheck = (await voiceWin.webContents.executeJavaScript(`({
+          phase: document.querySelector('[data-voicebar-phase]')?.getAttribute('data-voicebar-phase'),
+          visible: document.visibilityState === 'visible'
+        })`)) as { phase?: string | null; visible?: boolean }
+        if (
+          immediateStartCheck.phase !== 'starting' ||
+          immediateStartCheck.visible !== true ||
+          !voiceWin.isVisible()
+        ) {
+          throw new Error('voice bar did not show starting after the start request')
+        }
+
+        currentRequestId = null
+        rendererPhase = 'recording'
+        syncVoiceBar()
+        await voiceWin.webContents.executeJavaScript(
+          'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        )
+
+        const voiceBarCheck = (await voiceWin.webContents.executeJavaScript(`({
+          secure: window.isSecureContext,
+          bridgeKeys: Object.keys(window.koekakiVoiceBar ?? {}).sort(),
+          controllerBridgeHidden: typeof window.koekakiDesktop === 'undefined',
+          nodeGlobalsHidden: typeof window.require === 'undefined' && typeof window.process === 'undefined',
+          protocol: window.location.protocol,
+          host: window.location.hostname,
+          surface: new URLSearchParams(window.location.search).get('surface'),
+          phase: document.querySelector('[data-voicebar-phase]')?.getAttribute('data-voicebar-phase'),
+          message: document.querySelector('.voice-bar__message')?.textContent
+        })`)) as {
+          secure?: boolean
+          bridgeKeys?: string[]
+          controllerBridgeHidden?: boolean
+          nodeGlobalsHidden?: boolean
+          protocol?: string
+          host?: string
+          surface?: string | null
+          phase?: string | null
+          message?: string | null
+        }
+        const voiceBarBridgePassed =
+          voiceBarCheck.secure === true &&
+          JSON.stringify(voiceBarCheck.bridgeKeys) === JSON.stringify(['onPhase']) &&
+          voiceBarCheck.controllerBridgeHidden === true &&
+          voiceBarCheck.nodeGlobalsHidden === true &&
+          voiceBarCheck.protocol === `${DESKTOP_SCHEME}:` &&
+          voiceBarCheck.host === 'app' &&
+          voiceBarCheck.surface === 'voicebar' &&
+          voiceBarCheck.phase === 'recording' &&
+          voiceBarCheck.message === 'もう一度 右Alt で終了'
+        if (!voiceBarBridgePassed) throw new Error('secure voice bar shell checks failed')
+
+        const bounds = voiceWin.getBounds()
+        const voiceBarDisplay = screen.getDisplayMatching(bounds)
+        const workArea = voiceBarDisplay.workArea
+        const windowStatePassed =
+          bounds.width === VOICE_BAR_WIDTH &&
+          bounds.height === VOICE_BAR_HEIGHT &&
+          bounds.x === Math.round(workArea.x + (workArea.width - VOICE_BAR_WIDTH) / 2) &&
+          bounds.y === workArea.y + workArea.height - VOICE_BAR_HEIGHT - VOICE_BAR_BOTTOM_MARGIN &&
+          voiceWin.isVisible() &&
+          !voiceWin.isFocusable() &&
+          voiceWin.isAlwaysOnTop() &&
+          !voiceWin.isResizable() &&
+          !voiceWin.isMinimizable() &&
+          !voiceWin.isMaximizable() &&
+          BrowserWindow.getFocusedWindow() !== voiceWin &&
+          voiceWin.webContents.session === session.fromPartition(VOICE_BAR_PARTITION) &&
+          voiceWin.webContents.session !== win.webContents.session &&
+          hookProcess === null &&
+          activePasteProcesses.size === 0
+        if (!windowStatePassed) {
+          throw new Error(
+            `voice bar window state checks failed ${JSON.stringify({
+              bounds,
+              workArea,
+              visible: voiceWin.isVisible(),
+              focusable: voiceWin.isFocusable(),
+              alwaysOnTop: voiceWin.isAlwaysOnTop(),
+              resizable: voiceWin.isResizable(),
+              minimizable: voiceWin.isMinimizable(),
+              maximizable: voiceWin.isMaximizable(),
+              focused: BrowserWindow.getFocusedWindow() === voiceWin,
+            })}`,
+          )
+        }
+
+        const capture = await voiceWin.webContents.capturePage()
+        const captureSize = capture.getSize()
+        const captureBitmap = capture.toBitmap()
+        const capturePng = capture.toPNG()
+        let hasOpaquePixel = false
+        for (let index = 3; index < captureBitmap.length; index += 4) {
+          if (captureBitmap[index] > 200) {
+            hasOpaquePixel = true
+            break
+          }
+        }
+        if (
+          capture.isEmpty() ||
+          captureSize.width < 1 ||
+          captureSize.height < 1 ||
+          capturePng.length < 512 ||
+          captureBitmap.length < 4 ||
+          captureBitmap[3] > 16 ||
+          !hasOpaquePixel
+        ) {
+          throw new Error('voice bar capture was empty')
+        }
+        const captureDirectory = path.join(app.getPath('temp'), 'koekaki-self-test')
+        const capturePath = path.join(
+          captureDirectory,
+          `voicebar-recording-${process.pid}-${randomUUID()}.png`,
+        )
+        await mkdir(captureDirectory, { recursive: true })
+        await writeFile(capturePath, capturePng, { flag: 'wx' })
+        console.log(
+          `ELECTRON_VOICE_BAR_CAPTURE_META=css:${bounds.width}x${bounds.height},png:${captureSize.width}x${captureSize.height},scale:${voiceBarDisplay.scaleFactor}`,
+        )
+        console.log(`ELECTRON_VOICE_BAR_CAPTURE=${capturePath}`)
+
+        rendererPhase = 'idle'
+        syncVoiceBar()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        if (voiceWin.isVisible()) throw new Error('voice bar remained visible while idle')
+        rendererPhase = 'error'
+        syncVoiceBar()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        if (voiceWin.isVisible()) throw new Error('voice bar remained visible while in error')
+
         console.log('ELECTRON_DESKTOP_SHELL_SELF_TEST_OK')
         finishSelfTest(0)
       } catch (error) {
@@ -998,6 +1427,14 @@ function runDesktopShellSelfTest() {
         finishSelfTest(1)
       }
     })()
+  }
+  win.webContents.once('did-finish-load', () => {
+    controllerLoaded = true
+    runChecksWhenLoaded()
+  })
+  voiceWin.webContents.once('did-finish-load', () => {
+    voiceBarLoaded = true
+    runChecksWhenLoaded()
   })
 }
 
@@ -1016,6 +1453,7 @@ if (!hasSingleInstanceLock) {
     hookExpectedExit = true
     clearHotkeyReadyTimer()
     clearSelfTestTimer()
+    clearVoiceBarRecoveryTimer()
     hookProcess?.kill()
     for (const child of activePasteProcesses) child.kill()
   })

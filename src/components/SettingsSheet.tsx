@@ -4,7 +4,11 @@ import { testProviderKey } from '../lib/pipeline'
 import { anthropicListModels } from '../lib/providers/anthropic'
 import { geminiListModels } from '../lib/providers/gemini'
 import { openaiListModels } from '../lib/providers/openai'
-import { isWebSpeechSupported, prefersSingleShot, type SpeechDiagnostic } from '../lib/providers/webspeech'
+import {
+  isWebSpeechSupported,
+  prefersSegmentedRecognition,
+  type SpeechDiagnostic,
+} from '../lib/providers/webspeech'
 import { exportSettings, importSettings } from '../lib/storage'
 import type { PolishEngine, ProviderId, Settings, TranscribeEngine } from '../lib/types'
 import { ApiError } from '../lib/types'
@@ -329,15 +333,14 @@ export function SettingsSheet({
             {webSpeechOk && (
               <>
                 {' ／ 認識方式：'}
-                <strong>{prefersSingleShot() ? '単発（スマホ向け）' : '連続（PC向け）'}</strong>
+                <strong>{prefersSegmentedRecognition() ? '区切りながら継続（スマホ向け）' : '連続（PC向け）'}</strong>
               </>
             )}
           </div>
-          {webSpeechOk && prefersSingleShot() && (
+          {webSpeechOk && prefersSegmentedRecognition() && (
             <div className="desc" style={{ marginTop: 6 }}>
-              スマホでは、話し終わって少し黙ると自動で録音が終わります。連続認識はスマホだと同じ文を
-              何度も返す不具合が起きるため、あえて使っていません。続きを話したいときは、
-              「続けて話す」をオンにしてもう一度マイクを押してください。
+              スマホでは、短い無音でブラウザの認識が区切られても自動で次へつなぎます。
+              マイクをもう一度押すまでは録音を続けるので、考えながら話しても大丈夫です。
             </div>
           )}
         </div>

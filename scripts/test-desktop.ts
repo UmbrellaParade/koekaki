@@ -3,13 +3,17 @@ import path from 'node:path'
 import {
   isAllowedExternalUrl,
   isTrustedRendererUrl,
+  isTrustedVoiceBarRendererUrl,
+  isVoiceBarPhase,
   parseApiKeys,
   parseClipboardText,
   parseDictationPayload,
   parseErrorPayload,
   parseReadyPayload,
   parseStatePayload,
+  resolveVoiceBarPhase,
   resolveDesktopAssetPath,
+  VOICE_BAR_APP_URL,
 } from '../electron/desktopContract.ts'
 import { compactDesktopMessage, decideDesktopCommand } from '../src/lib/desktopFlow.ts'
 
@@ -133,6 +137,43 @@ test('renderer URLは専用originか明示したloopbackだけを信頼する', 
   )
   assert.equal(
     isTrustedRendererUrl('http://127.0.0.1:5174/', 'http://127.0.0.1:5173'),
+    false,
+  )
+})
+
+test('録音バーには処理中の4状態だけを渡す', () => {
+  assert.equal(isVoiceBarPhase('starting'), true)
+  assert.equal(isVoiceBarPhase('recording'), true)
+  assert.equal(isVoiceBarPhase('transcribing'), true)
+  assert.equal(isVoiceBarPhase('polishing'), true)
+  assert.equal(isVoiceBarPhase('idle'), false)
+  assert.equal(isVoiceBarPhase('error'), false)
+})
+
+test('右Altの開始要求直後はrenderer通知を待たず準備中として表示する', () => {
+  assert.equal(resolveVoiceBarPhase('idle', true), 'starting')
+  assert.equal(resolveVoiceBarPhase('idle', false), null)
+  assert.equal(resolveVoiceBarPhase('recording', true), 'recording')
+  assert.equal(resolveVoiceBarPhase('error', true), null)
+})
+
+test('録音バーURLは専用surfaceだけを許可する', () => {
+  assert.equal(isTrustedVoiceBarRendererUrl(VOICE_BAR_APP_URL), true)
+  assert.equal(isTrustedVoiceBarRendererUrl('koekaki://app/index.html'), false)
+  assert.equal(isTrustedVoiceBarRendererUrl('koekaki://app/index.html?surface=voicebar&extra=1'), false)
+  assert.equal(isTrustedVoiceBarRendererUrl('koekaki://evil/index.html?surface=voicebar'), false)
+  assert.equal(
+    isTrustedVoiceBarRendererUrl(
+      'http://127.0.0.1:5173/?surface=voicebar',
+      'http://127.0.0.1:5173',
+    ),
+    true,
+  )
+  assert.equal(
+    isTrustedVoiceBarRendererUrl(
+      'http://127.0.0.1:5173/settings?surface=voicebar',
+      'http://127.0.0.1:5173',
+    ),
     false,
   )
 })
